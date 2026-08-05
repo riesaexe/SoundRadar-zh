@@ -67,9 +67,29 @@ def _punch_to_exponent(punch):
     return 1.0 + max(0.0, min(100.0, punch)) / 100.0 * 1.4
 
 
-def _size_to_tick_gamma(size):
+def _punch_to_quiet_floor(punch):
+    """0-100 -> the share of full size a just-detected QUIET event still gets.
+
+    This is what actually decides whether louder looks bigger. With a fixed
+    floor of 0.35 every sound started at a third of full size, so the whole
+    range from a distant footstep to a grenade was squeezed into the top
+    two-thirds and read as "all the bars are the same". Punch now sets the
+    floor: at 0 every detected sound draws the same size, at 100 quiet cues are
+    small stubs and only loud sounds fill their slot.
+    """
+    return 0.45 - max(0.0, min(100.0, punch)) / 100.0 * 0.37
+
+
+def _size_to_tick(size):
+    """0-100 -> how much of its slot a full-size block fills.
+
+    Size controls the MAXIMUM block size only. The loudness->size curve belongs
+    to Punch; Size used to also set a gamma below 1.0, which meant turning the
+    blocks bigger simultaneously flattened the difference between a loud sound
+    and a quiet one — the two controls fought each other.
+    """
     sz = max(0.0, min(100.0, size)) / 100.0
-    return 0.7 + sz * 2.0, 1.0 - sz * 0.5
+    return 0.7 + sz * 2.0
 
 
 def _colours(hex_str):
@@ -142,6 +162,7 @@ def main() -> int:
                           onset_sigma=onset_sigma, knee_sigma=knee_sigma,
                           floor_db=floor_db,
                           punch=_punch_to_exponent(cfg.punch),
+                          quiet_floor=_punch_to_quiet_floor(cfg.punch),
                           adapt=adapt, abs_weight=abs_weight,
                           band_weights=profile_weights(cfg.listen))
     cli_capture = (args.all_apps or args.process or args.pid
@@ -183,7 +204,7 @@ def main() -> int:
         print("stereo: all system audio (no audio changes)")
     cap.start()
 
-    tick_fraction, gamma = _size_to_tick_gamma(cfg.size)
+    tick_fraction = _size_to_tick(cfg.size)
     near, far = _colours(cfg.color)
     app = QtWidgets.QApplication([])
     _screens = app.screens()
@@ -192,7 +213,7 @@ def main() -> int:
                                          depth=cfg.thickness,
                                          opacity=cfg.opacity,
                                          tick_fraction=tick_fraction,
-                                         gamma=gamma,
+                                         gamma=1.0,
                                          brightness=cfg.gain,
                                          near_color=near, far_color=far),
                             screen=_screens[_mon])
@@ -250,10 +271,11 @@ def main() -> int:
          acfg.floor_db) = _sens_to_detect(cfg.sensitivity)
         acfg.decay_ms = cfg.decay_ms
         acfg.punch = _punch_to_exponent(cfg.punch)
+        acfg.quiet_floor = _punch_to_quiet_floor(cfg.punch)
         acfg.adapt, acfg.abs_weight = _adapt_to_weights(cfg.adapt)
         acfg.band_weights = profile_weights(cfg.listen)
         st = overlay.style_
-        st.tick_fraction, st.gamma = _size_to_tick_gamma(cfg.size)
+        st.tick_fraction = _size_to_tick(cfg.size)
         st.depth = cfg.thickness
         st.opacity = cfg.opacity
         st.brightness = cfg.gain
