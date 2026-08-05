@@ -394,6 +394,13 @@ class SettingsWindow(QtWidgets.QWidget):
         self._diag_verdict.setFont(vf)
         cv.addWidget(self._diag_verdict)
 
+        # shown only when the verdict needs explaining (e.g. stereo-in-7.1)
+        self._diag_detail = QtWidgets.QLabel("")
+        self._diag_detail.setObjectName("hint")
+        self._diag_detail.setWordWrap(True)
+        self._diag_detail.setVisible(False)
+        cv.addWidget(self._diag_detail)
+
         sub = QtWidgets.QLabel(
             "Play a sound with a clear direction. For real surround the bars "
             "should differ. If every bar moves together, it's being collapsed "
@@ -461,18 +468,36 @@ class SettingsWindow(QtWidgets.QWidget):
             bar.setValue(int(max(0.0, min(100.0, (d + 60.0) / 60.0 * 100.0))))
             val.setText("—" if d <= -119.0 else f"{d:.0f} dB")
             any_loud = any_loud or d > -55.0
-        # A mono collapse makes EVERY channel identical -> spread ~0. Real
-        # direction leaves some channels loud and others quiet -> big spread.
+        # Three distinct failures, and the spread test alone cannot tell them
+        # apart. A stereo app playing into a 7.1 device leaves the surround
+        # channels at DIGITAL ZERO, which produces a huge spread and used to be
+        # reported as "direction detected" — exactly backwards, and it hides the
+        # one problem the user actually has to go and fix.
         spread = (max(allvals) - min(allvals)) if allvals else 0.0
+        live = [i for i in range(n) if allvals[i] > -80.0]
         if not any_loud:
             self._diag_verdict.setText("● Silence — nothing on this device")
             self._diag_verdict.setStyleSheet("color:#757b87;")
+        elif n >= 6 and len(live) <= 2:
+            names = ", ".join(lv.labels[i] for i in live) or "none"
+            self._diag_verdict.setText(
+                f"● Stereo only ({names}) — no front/back")
+            self._diag_verdict.setStyleSheet("color:#e0a030;")
+            self._diag_detail.setText(
+                f"Audio is reaching this {n}-channel device, but only {names} "
+                "carry any signal — the surround channels are silent. The radar "
+                "can only show left/right like this. The app you're listening to "
+                "is playing in stereo: set the GAME's audio output to 7.1 "
+                "surround (and its Windows output device to this one).")
+            self._diag_detail.setVisible(True)
+            return
         elif spread > 6.0:
             self._diag_verdict.setText("● Direction detected — radar will work")
             self._diag_verdict.setStyleSheet(f"color:{ACCENT};")
         else:
             self._diag_verdict.setText("● Mono / uniform — collapsed, no direction")
             self._diag_verdict.setStyleSheet("color:#e0a030;")
+        self._diag_detail.setVisible(False)
 
     # -- tune tab --------------------------------------------------------
     def _tune_tab(self):
