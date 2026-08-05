@@ -9,19 +9,28 @@ from dataclasses import asdict, dataclass, fields
 
 _DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")),
                     "SoundRadar")
+DATA_DIR = _DIR
 CONFIG_PATH = os.path.join(_DIR, "config.json")
 PRESETS_PATH = os.path.join(_DIR, "presets.json")
+CAPTURE_DIR = os.path.join(_DIR, "captures")
 
 # fields a preset captures (the per-game look/behaviour, not the audio setup)
-PRESET_FIELDS = ["sensitivity", "adapt", "decay_ms", "size", "gain",
-                 "segments", "thickness", "opacity", "color"]
+PRESET_FIELDS = ["sensitivity", "adapt", "punch", "listen", "decay_ms", "size",
+                 "gain", "segments", "thickness", "opacity", "color"]
 
 
 @dataclass
 class Settings:
     # analysis / behaviour (0-100 scales where noted)
-    sensitivity: float = 50.0   # reacts to more/quieter sounds
+    sensitivity: float = 50.0   # how far above its own background a sound must
+                                # stand to register (high = quieter cues show)
     adapt: float = 40.0         # favour events over constant audio
+    punch: float = 45.0         # 0-100, how much bigger loud sounds react than
+                                # ordinary ones (0 = all events the same size)
+    listen: str = "all"         # which frequencies to emphasise; see
+                                # analysis.LISTEN_PROFILES. Stays NEUTRAL as a
+                                # global default — per-game tuning belongs in a
+                                # preset, not baked in for every game.
     gain: float = 2.2           # overall brightness
     decay_ms: float = 450.0     # how slowly a block fades
     # overlay look

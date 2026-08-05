@@ -28,7 +28,7 @@ from dataclasses import dataclass
 import numpy as np
 import soundcard as sc
 
-from .audio import Levels, labels_for
+from .audio import BandSplitter, Levels, labels_for
 
 
 # Mono downmix weights by channel label. Everything is included so no sound is
@@ -73,12 +73,12 @@ class MonoRouter:
         self.peak_out = 0.0
         self.underruns = 0
         self.drops = 0
+        self.recorder = None    # optional recorder.SessionRecorder (tuning)
 
     # -- radar interface (drop-in for LoopbackCapture) -------------------
     def get_levels(self) -> Levels:
         with self._lock:
-            return Levels(self._levels.rms.copy(), self._levels.channels,
-                          self._levels.labels, self._levels.ts)
+            return self._levels.copy()
 
     def start(self) -> None:
         if self._threads:
@@ -107,6 +107,7 @@ class MonoRouter:
                                     include_loopback=True)
         n = self.cfg.blocksize
         max_samples = int(self.cfg.max_buffer_ms / 1000 * self.cfg.samplerate)
+        splitter = BandSplitter(self.cfg.samplerate)
         with src.recorder(samplerate=self.cfg.samplerate, channels=None,
                           blocksize=n) as rec:
             while not self._stop.is_set():
@@ -115,10 +116,14 @@ class MonoRouter:
                     continue
                 ch = data.shape[1]
                 labels = labels_for(ch)
+                rec = self.recorder
+                if rec is not None:
+                    rec.write(data)
                 rms = np.sqrt(np.mean(np.square(data, dtype=np.float64),
                                       axis=0)).astype(np.float32)
                 with self._lock:
-                    self._levels = Levels(rms, ch, labels, time.perf_counter())
+                    self._levels = Levels(rms, ch, labels, time.perf_counter(),
+                                          splitter.analyse(data))
                 mono = downmix_to_mono(data, labels) * self.cfg.out_gain
                 np.clip(mono, -1.0, 1.0, out=mono)
                 with self._buf_lock:

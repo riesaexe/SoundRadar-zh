@@ -32,7 +32,7 @@ sys.coinit_flags = 0  # COINIT_MULTITHREADED
 import comtypes  # noqa: E402
 from comtypes import GUID, IUnknown, COMMETHOD, COMObject  # noqa: E402
 
-from .audio import Levels, labels_for
+from .audio import BandSplitter, Levels, labels_for
 from .router import downmix_to_mono
 
 # --- constants -------------------------------------------------------------
@@ -304,6 +304,7 @@ class ProcessLoopbackCapture:
         self._buf_samples = 0
         self._buf_lock = threading.Lock()
         self.error: str | None = None
+        self.recorder = None    # optional recorder.SessionRecorder (tuning)
         self.frames_seen = 0
         self.reconnects = 0
         self.peak_out = 0.0
@@ -311,8 +312,7 @@ class ProcessLoopbackCapture:
 
     def get_levels(self) -> Levels:
         with self._lock:
-            return Levels(self._levels.rms.copy(), self._levels.channels,
-                          self._levels.labels, self._levels.ts)
+            return self._levels.copy()
 
     def start(self):
         self._stop.clear()
@@ -431,6 +431,7 @@ class ProcessLoopbackCapture:
         capture = client.GetService(byref(IAudioCaptureClient._iid_))
         client.Start()
         ch = self.channels
+        splitter = BandSplitter(self.samplerate)
         try:
             while not self._stop.is_set():
                 if _kernel32.WaitForSingleObject(event, 200) != WAIT_OBJECT_0:
@@ -446,12 +447,16 @@ class ProcessLoopbackCapture:
                             block = np.frombuffer(
                                 buf, dtype=np.float32).reshape(-1, ch)
                         self.frames_seen += nframes
+                        rec = self.recorder
+                        if rec is not None:
+                            rec.write(block)
                         rms = np.sqrt(np.mean(
                             np.square(block, dtype=np.float64),
                             axis=0)).astype(np.float32)
                         with self._lock:
                             self._levels = Levels(
-                                rms, ch, labels_for(ch), time.perf_counter())
+                                rms, ch, labels_for(ch), time.perf_counter(),
+                                splitter.analyse(block))
                         if self.play_mono:
                             mono = downmix_to_mono(
                                 block, labels_for(ch)) * self.out_gain

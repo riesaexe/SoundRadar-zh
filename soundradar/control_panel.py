@@ -6,10 +6,13 @@ apply callback (updates the running radar live) and saves to disk.
 
 from __future__ import annotations
 
+import os
+
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import settings as settings_mod
 from .settings import PRESET_FIELDS, Settings
+from .analysis import LISTEN_PROFILES
 from .audio import list_loopback_devices, list_output_devices, rms_to_dbfs
 
 ACCENT = "#4ECDC4"        # refined muted teal
@@ -56,24 +59,48 @@ QInputDialog, QMessageBox {{ background: #14161c; }}
 QProgressBar {{ background: #1d2029; border: 1px solid #2a2e39; border-radius: 5px;
                 height: 12px; }}
 QProgressBar::chunk {{ background: {ACCENT}; border-radius: 4px; }}
+QLineEdit {{ background: #1d2029; border: 1px solid #2a2e39; border-radius: 8px;
+             padding: 6px 10px; }}
+QLineEdit:focus {{ border-color: {ACCENT}; }}
+QScrollArea {{ border: none; }}
+QScrollBar:vertical {{ background: transparent; width: 10px; margin: 0; }}
+QScrollBar:horizontal {{ background: transparent; height: 10px; margin: 0; }}
+QScrollBar::handle {{ background: #2a2e39; border-radius: 5px; }}
+QScrollBar::handle:vertical {{ min-height: 28px; }}
+QScrollBar::handle:horizontal {{ min-width: 28px; }}
+QScrollBar::handle:hover {{ background: #363b48; }}
+QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0; }}
+QScrollBar::add-page, QScrollBar::sub-page {{ background: none; }}
 """
 
 
 class SettingsWindow(QtWidgets.QWidget):
     def __init__(self, settings: Settings, on_change, on_test=None,
-                 get_levels=None):
+                 get_levels=None, recording=None):
         super().__init__(None)
         self.s = settings
         self.on_change = on_change
         self.on_test = on_test
         self._get_levels = get_levels      # () -> Levels, for the Check tab
+        # (start, stop, mark, status) callbacks; None hides the Tune tab
+        self._rec = recording
         self._diag_n = 0                   # channel count the bars are built for
         self._diag_bars = {}               # index -> (QProgressBar, value label)
         self._rows = []          # (field, slider, disp_fn, value_label)
         self._presets = settings_mod.load_presets()
         self.setWindowTitle("SoundRadar")
+        # A normal resizable window: min/max/close, and free to be maximised or
+        # dragged to any size. (A fixed width used to disable maximise, and an
+        # unbounded height meant the panel opened taller than the desktop work
+        # area on scaled laptop displays and clipped its own footer.)
+        self.setWindowFlags(QtCore.Qt.WindowType.Window
+                            | QtCore.Qt.WindowType.WindowMinimizeButtonHint
+                            | QtCore.Qt.WindowType.WindowMaximizeButtonHint
+                            | QtCore.Qt.WindowType.WindowCloseButtonHint)
         self.setStyleSheet(STYLE)
-        self.setFixedWidth(440)
+        # Height can go as small as the user likes (tabs scroll). Width gets a
+        # content-derived floor at the end of __init__ so no row is ever cut off.
+        self.setMinimumHeight(240)
 
         root = QtWidgets.QVBoxLayout(self)
         root.setContentsMargins(16, 16, 16, 14)
@@ -93,11 +120,15 @@ class SettingsWindow(QtWidgets.QWidget):
             tb.clicked.connect(lambda: self.on_test())
             root.addWidget(tb)
 
+        # Every tab scrolls: the window can then be shrunk to any height (or
+        # opened on a short screen) without ever clipping its content.
         tabs = QtWidgets.QTabWidget()
-        tabs.addTab(self._radar_tab(), "Radar")
-        tabs.addTab(self._setup_tab(), "Setup")
-        tabs.addTab(self._diag_tab(), "Check")
-        root.addWidget(tabs)
+        tabs.addTab(self._scrollable(self._radar_tab()), "Radar")
+        tabs.addTab(self._scrollable(self._setup_tab()), "Setup")
+        tabs.addTab(self._scrollable(self._diag_tab()), "Check")
+        if self._rec is not None:
+            tabs.addTab(self._scrollable(self._tune_tab()), "Tune")
+        root.addWidget(tabs, 1)
 
         foot = QtWidgets.QLabel("Changes apply live and save automatically.")
         foot.setObjectName("hint")
@@ -107,6 +138,55 @@ class SettingsWindow(QtWidgets.QWidget):
         self._diag_timer = QtCore.QTimer(self)
         self._diag_timer.timeout.connect(self._update_diag)
         self._diag_timer.start(120)
+
+        # A long device name ("Voicemeeter VAIO3 Input (VB-Audio…)") must not
+        # dictate how wide the panel has to be. An explicit minimum width is the
+        # one thing that reliably overrides QComboBox's content-derived
+        # minimumSizeHint (the size-adjust policy alone is ignored once a
+        # stylesheet is in play), and Expanding lets them use whatever width the
+        # window does have. The full name stays available in the dropdown and as
+        # a tooltip, so nothing is actually lost when the panel is narrow.
+        for cb in self.findChildren(QtWidgets.QComboBox):
+            cb.view().setMinimumWidth(cb.minimumSizeHint().width())
+            cb.setMinimumWidth(110)
+            cb.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding,
+                             cb.sizePolicy().verticalPolicy())
+            if not cb.toolTip():   # don't clobber an explanatory tooltip
+                cb.setToolTip(cb.currentText())
+                cb.currentTextChanged.connect(
+                    lambda t, c=cb: c.setToolTip(t) if t else None)
+
+        self.setMinimumWidth(400)
+        self.resize(460, self.sizeHint().height())
+        self._fit_to_screen()
+
+    # -- window sizing ---------------------------------------------------
+    def _fit_to_screen(self):
+        """Clamp to the desktop work area and nudge fully on-screen.
+
+        Guards two cases: the panel's natural height exceeding a short (or
+        display-scaled) screen, and being reopened after the resolution changed
+        or on a different monitor.
+        """
+        scr = self.screen() or QtWidgets.QApplication.primaryScreen()
+        if scr is None:
+            return
+        avail = scr.availableGeometry()
+        w = min(self.width(), avail.width() - 24)
+        h = min(self.height(), avail.height() - 24)
+        if (w, h) != (self.width(), self.height()):
+            self.resize(max(self.minimumWidth(), w),
+                        max(self.minimumHeight(), h))
+        g = self.frameGeometry()
+        if not avail.contains(g):
+            g.moveLeft(max(avail.left(), min(g.left(), avail.right() - g.width())))
+            g.moveTop(max(avail.top(), min(g.top(), avail.bottom() - g.height())))
+            self.move(g.topLeft())
+
+    def showEvent(self, e: QtGui.QShowEvent) -> None:
+        super().showEvent(e)
+        if not self.isMaximized():
+            self._fit_to_screen()
 
     # -- presets ---------------------------------------------------------
     def _preset_bar(self):
@@ -168,9 +248,32 @@ class SettingsWindow(QtWidgets.QWidget):
         v.setContentsMargins(12, 8, 12, 12); v.setSpacing(12)
 
         beh = self._card("Behaviour"); g = beh.layout()
-        self._row(g, 0, "Sensitivity", "sensitivity", 0, 100)
-        self._row(g, 1, "Adapt", "adapt", 0, 100)
-        self._row(g, 2, "Fade", "decay_ms", 100, 900)
+        self._row(g, 0, "Sensitivity", "sensitivity", 0, 100,
+                  tip="How far above its own background a sound must stand to "
+                      "show. Higher picks up distant footsteps and quiet "
+                      "voices; lower shows only obvious sounds.")
+        self._row(g, 1, "Adapt", "adapt", 0, 100,
+                  tip="How quickly constant audio (engine, wind, music) is "
+                      "treated as background and stops lighting the radar.")
+        self._row(g, 2, "Punch", "punch", 0, 100,
+                  tip="How much bigger loud sounds react than ordinary ones. "
+                      "0 = every detected sound draws the same size; higher = "
+                      "gunfire and explosions dwarf footsteps.")
+        self._row(g, 3, "Fade", "decay_ms", 100, 900,
+                  tip="How slowly a block fades once the sound stops.")
+        g.addWidget(QtWidgets.QLabel("Listen for"), 4, 0)
+        self._listen = QtWidgets.QComboBox()
+        for key, (label, _w) in LISTEN_PROFILES.items():
+            self._listen.addItem(label, key)
+        idx = self._listen.findData(self.s.listen)
+        self._listen.setCurrentIndex(idx if idx >= 0 else 0)
+        self._listen.setToolTip(
+            "Which frequencies matter. 'Footsteps & voices' de-emphasises "
+            "rumble so a quiet footstep or proximity chat isn't buried under "
+            "engine and explosion noise.")
+        self._listen.currentIndexChanged.connect(
+            lambda i: self._set("listen", self._listen.itemData(i)))
+        g.addWidget(self._listen, 4, 1, 1, 2)
         v.addWidget(beh)
 
         app = self._card("Appearance"); g = app.layout()
@@ -368,7 +471,122 @@ class SettingsWindow(QtWidgets.QWidget):
             self._diag_verdict.setText("● Mono / uniform — collapsed, no direction")
             self._diag_verdict.setStyleSheet("color:#e0a030;")
 
+    # -- tune tab --------------------------------------------------------
+    def _tune_tab(self):
+        """Record a real session so the detector can be tuned against actual
+        game audio rather than assumptions about how a game is mixed."""
+        w = QtWidgets.QWidget()
+        v = QtWidgets.QVBoxLayout(w)
+        v.setContentsMargins(12, 8, 12, 12); v.setSpacing(12)
+
+        card = self._card("Record a sample"); g = card.layout()
+        intro = QtWidgets.QLabel(
+            "Optional. Records a few minutes of the audio SoundRadar is "
+            "capturing, so the radar's defaults can be checked against how "
+            "this game actually sounds instead of guesswork.\n\n"
+            "There is nothing to set up: start it, play normally, stop it. "
+            "You don't need to stage anything or press anything while playing.")
+        intro.setObjectName("hint"); intro.setWordWrap(True)
+        g.addWidget(intro, 0, 0, 1, 3)
+
+        g.addWidget(QtWidgets.QLabel("Name"), 1, 0)
+        self._rec_name = QtWidgets.QLineEdit()
+        self._rec_name.setPlaceholderText("e.g. arma-reforger")
+        g.addWidget(self._rec_name, 1, 1, 1, 2)
+
+        self._rec_btn = QtWidgets.QPushButton("●   Start recording")
+        self._rec_btn.setObjectName("accent")
+        self._rec_btn.clicked.connect(self._toggle_record)
+        g.addWidget(self._rec_btn, 2, 0, 1, 3)
+
+        self._rec_state = QtWidgets.QLabel("Not recording.")
+        self._rec_state.setObjectName("hint"); self._rec_state.setWordWrap(True)
+        g.addWidget(self._rec_state, 3, 0, 1, 3)
+
+        self._mark_btn = QtWidgets.QPushButton("Mark this moment (optional)")
+        self._mark_btn.setToolTip("Only if you happen to be at the panel — a "
+                                 "marked moment is easier to find in the "
+                                 "recording. Never required.")
+        self._mark_btn.clicked.connect(self._do_mark)
+        self._mark_btn.setEnabled(False)
+        g.addWidget(self._mark_btn, 4, 0, 1, 3)
+        v.addWidget(card)
+
+        howto = QtWidgets.QFrame(); howto.setObjectName("card")
+        hl = QtWidgets.QVBoxLayout(howto)
+        hl.setContentsMargins(14, 12, 14, 12); hl.setSpacing(8)
+        openf = QtWidgets.QPushButton("Open recordings folder")
+        openf.clicked.connect(self._open_captures); hl.addWidget(openf)
+        note = QtWidgets.QLabel(
+            "Saved locally to %APPDATA%\\SoundRadar\\captures — about 45 MB "
+            "per minute. Note this records the game audio, including any voice "
+            "chat that is playing.")
+        note.setObjectName("hint"); note.setWordWrap(True); hl.addWidget(note)
+        v.addWidget(howto)
+        v.addStretch(1)
+
+        self._rec_timer = QtCore.QTimer(self)
+        self._rec_timer.timeout.connect(self._update_record_state)
+        self._rec_timer.start(500)
+        return w
+
+    def _toggle_record(self):
+        start, stop, _mark, status = self._rec
+        if status() is not None:
+            path = stop()
+            self._rec_btn.setText("●   Start recording")
+            self._mark_btn.setEnabled(False)
+            self._rec_state.setText(f"Saved: {path}" if path
+                                    else "Nothing was recorded.")
+            return
+        name = self._rec_name.text().strip() or "session"
+        if start(name) is None:
+            self._rec_state.setText(
+                "No audio arriving yet — start the game (or check the Check "
+                "tab) and try again.")
+            return
+        self._rec_btn.setText("■   Stop recording")
+        self._mark_btn.setEnabled(True)
+
+    def _do_mark(self):
+        _start, _stop, mark, _status = self._rec
+        t = mark("interesting")
+        if t is not None:
+            self._rec_state.setText(f"Marked {t:.1f}s into the recording")
+
+    def _update_record_state(self):
+        if self._rec is None or not self.isVisible():
+            return
+        st = self._rec[3]()
+        if st is None:
+            return
+        msg = f"Recording — {st['elapsed']:.0f}s, {st['marks']} mark(s)"
+        if st["dropped"]:
+            msg += f"  (dropped {st['dropped']} frames)"
+        if st["error"]:
+            msg += f"  ERROR: {st['error']}"
+        self._rec_state.setText(msg)
+
+    def _open_captures(self):
+        os.makedirs(settings_mod.CAPTURE_DIR, exist_ok=True)
+        QtGui.QDesktopServices.openUrl(
+            QtCore.QUrl.fromLocalFile(settings_mod.CAPTURE_DIR))
+
     # -- helpers ---------------------------------------------------------
+    def _scrollable(self, inner):
+        """Wrap a tab page so it scrolls vertically instead of being clipped."""
+        sa = QtWidgets.QScrollArea()
+        sa.setWidgetResizable(True)
+        sa.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        # AsNeeded, not AlwaysOff: the window's minimum width is derived from the
+        # content below, so this bar should never appear — but if a big system
+        # font or scaling factor makes a row wider than expected, content stays
+        # reachable by scrolling instead of being cut off past the right edge.
+        sa.setHorizontalScrollBarPolicy(
+            QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        sa.setWidget(inner)
+        return sa
+
     def _card(self, title):
         box = QtWidgets.QGroupBox(title)
         grid = QtWidgets.QGridLayout(box)
@@ -377,7 +595,8 @@ class SettingsWindow(QtWidgets.QWidget):
         grid.setHorizontalSpacing(12); grid.setVerticalSpacing(10)
         return box
 
-    def _row(self, grid, r, label, field, lo, hi, mul=1, integer=False):
+    def _row(self, grid, r, label, field, lo, hi, mul=1, integer=False,
+             tip=None):
         def disp(val):
             return int(round(val * mul))
 
@@ -387,6 +606,9 @@ class SettingsWindow(QtWidgets.QWidget):
 
         name = QtWidgets.QLabel(label)
         sld = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
+        if tip:
+            name.setToolTip(tip)
+            sld.setToolTip(tip)
         sld.setMinimum(int(lo)); sld.setMaximum(int(hi))
         sld.setValue(disp(getattr(self.s, field)))
         val = QtWidgets.QLabel(str(sld.value())); val.setObjectName("hint")
@@ -408,6 +630,11 @@ class SettingsWindow(QtWidgets.QWidget):
             sld.setValue(disp(getattr(self.s, field)))
             sld.blockSignals(False)
             val.setText(str(sld.value()))
+        idx = self._listen.findData(self.s.listen)
+        if idx >= 0:
+            self._listen.blockSignals(True)
+            self._listen.setCurrentIndex(idx)
+            self._listen.blockSignals(False)
         self._paint_swatch()
 
     def _on_mode(self, idx):

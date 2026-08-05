@@ -28,18 +28,31 @@ import time
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from soundradar.audio import CaptureConfig, LoopbackCapture, list_loopback_devices
-from soundradar.analysis import (AnalysisConfig, AdaptiveBaseline,
-                                 DirectionEnvelopes, channels_to_directions)
+from soundradar.analysis import (AnalysisConfig, DirectionAnalyzer,
+                                 DirectionEnvelopes, profile_weights)
 from soundradar.overlay import OverlayWindow, OverlayStyle, CHANNEL_ANGLES
 from soundradar.router import MonoRouter, RouterConfig
 from soundradar.proc_loopback import ProcessLoopbackCapture, find_process_pids
 from soundradar import settings as settings_mod
 from soundradar.control_panel import SettingsWindow
+from soundradar.recorder import SessionRecorder
 
 
-def _sens_to_contrast_floor(sens):
+def _sens_to_detect(sens):
+    """0-100 -> (onset_sigma, knee_sigma).
+
+    Sensitivity is how far a sound has to stand out from its band's normal
+    fluctuation before the radar shows it. High = distant/quiet cues register;
+    low = only obvious standouts do.
+    """
     sv = max(0.0, min(100.0, sens)) / 100.0
-    return 0.9 - sv * 0.85, -44.0 - sv * 16.0
+    return 4.5 - sv * 3.3, 14.0 - sv * 8.0
+
+
+def _punch_to_exponent(punch):
+    """0-100 -> exponent on absolute loudness. 1.0 = every event the same size
+    once detected; higher = loud sounds grow much bigger than ordinary ones."""
+    return 1.0 + max(0.0, min(100.0, punch)) / 100.0 * 1.4
 
 
 def _size_to_tick_gamma(size):
@@ -109,12 +122,14 @@ def main() -> int:
     # all tunables come from the saved settings (edited live in the control
     # panel); CLI keeps the mode flags (--route-audio, --device, --process...).
     cfg = settings_mod.load()
-    contrast, floor_db = _sens_to_contrast_floor(cfg.sensitivity)
-    # gain stays 1.0 here: loudness drives block SIZE only. "Brightness" is a
-    # separate overlay multiplier (st.brightness) so the two are independent.
-    acfg = AnalysisConfig(floor_db=floor_db, ceil_db=args.ceil_db,
-                          gain=1.0, attack_ms=args.attack_ms,
-                          decay_ms=cfg.decay_ms, contrast=contrast)
+    onset_sigma, knee_sigma = _sens_to_detect(cfg.sensitivity)
+    # Loudness drives block SIZE only. "Brightness" is a separate overlay
+    # multiplier (st.brightness) so the two stay independent.
+    acfg = AnalysisConfig(attack_ms=args.attack_ms, decay_ms=cfg.decay_ms,
+                          onset_sigma=onset_sigma, knee_sigma=knee_sigma,
+                          punch=_punch_to_exponent(cfg.punch),
+                          adapt=max(0.0, min(100.0, cfg.adapt)) / 100.0,
+                          band_weights=profile_weights(cfg.listen))
     cli_capture = (args.all_apps or args.process or args.pid
                    or args.route_audio or args.device)
     if cli_capture:
@@ -213,13 +228,15 @@ def main() -> int:
                      QtWidgets.QSystemTrayIcon.MessageIcon.Information, 3000)
 
     env = DirectionEnvelopes(acfg)
-    baseline = AdaptiveBaseline(amount=max(0.0, min(100.0, cfg.adapt)) / 100.0)
+    analyzer = DirectionAnalyzer(acfg)
 
     def apply_settings():
         """Push the (possibly just-changed) settings into the live radar."""
-        acfg.contrast, acfg.floor_db = _sens_to_contrast_floor(cfg.sensitivity)
+        acfg.onset_sigma, acfg.knee_sigma = _sens_to_detect(cfg.sensitivity)
         acfg.decay_ms = cfg.decay_ms
-        baseline.amount = max(0.0, min(100.0, cfg.adapt)) / 100.0
+        acfg.punch = _punch_to_exponent(cfg.punch)
+        acfg.adapt = max(0.0, min(100.0, cfg.adapt)) / 100.0
+        acfg.band_weights = profile_weights(cfg.listen)
         st = overlay.style_
         st.tick_fraction, st.gamma = _size_to_tick_gamma(cfg.size)
         st.depth = cfg.thickness
@@ -245,10 +262,56 @@ def main() -> int:
 
     _win = {"w": None}
 
+    # -- tuning capture ---------------------------------------------------
+    # Records the raw audio the capture backend is seeing, so the detector can
+    # be tuned offline against a real game session instead of assumptions.
+    _rec = {"r": None}
+
+    def _samplerate_of(c):
+        return (getattr(c, "samplerate", None)
+                or getattr(getattr(c, "cfg", None), "samplerate", None) or 48000)
+
+    def start_record(name):
+        if _rec["r"] is not None:
+            return None
+        lv = cap.get_levels()
+        if not lv.channels:
+            return None               # no audio arriving yet; nothing to record
+        r = SessionRecorder(
+            _samplerate_of(cap), lv.channels, lv.labels, name=name,
+            meta={"mode": cfg.mode, "capture_device": cfg.capture_device,
+                  "settings": {f: getattr(cfg, f)
+                               for f in settings_mod.PRESET_FIELDS}})
+        r.start()
+        cap.recorder = r              # only now: the writer must be ready
+        _rec["r"] = r
+        return r
+
+    def stop_record():
+        r = _rec["r"]
+        if r is None:
+            return None
+        cap.recorder = None           # detach before closing the file
+        _rec["r"] = None
+        return r.stop()
+
+    def mark_record(label):
+        r = _rec["r"]
+        return None if r is None else r.mark(label)
+
+    def record_status():
+        r = _rec["r"]
+        if r is None:
+            return None
+        return {"elapsed": r.elapsed, "marks": len(r.marks),
+                "dropped": r.dropped_frames, "error": r.error}
+
     def open_settings():
         if _win["w"] is None:
             _win["w"] = SettingsWindow(cfg, apply_settings, on_test=start_test,
-                                       get_levels=cap.get_levels)
+                                       get_levels=cap.get_levels,
+                                       recording=(start_record, stop_record,
+                                                  mark_record, record_status))
         w = _win["w"]
         w.show(); w.raise_(); w.activateWindow()
 
@@ -287,8 +350,7 @@ def main() -> int:
         if lv.channels and lv.channels != last["ch"]:
             last["ch"] = lv.channels
             print(f"capturing {lv.channels} channels: {lv.labels}")
-        raw = channels_to_directions(lv, acfg)
-        raw = baseline.apply(raw, dt)
+        raw = analyzer.update(lv, dt)
         smoothed = env.update(raw, dt)
         overlay.set_channel_intensities(smoothed, smoothed.get("LFE", 0.0))
 
@@ -316,6 +378,7 @@ def main() -> int:
     try:
         rc = app.exec()
     finally:
+        stop_record()      # flush and close a capture left running on quit
         cap.stop()
     return rc
 
