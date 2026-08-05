@@ -45,6 +45,10 @@ class Settings:
     capture_device: str = ""    # surround: name of the 7.1 virtual device
     output_device: str = "Headphones"  # where the mono mix plays (surround)
     # audio output
+    lift: float = 0.0           # 0-100, raise quiet sounds toward the loud
+                                # ones (dB of upward compression). This is the
+                                # only control that makes the mix genuinely
+                                # LOUDER once peaks reach full scale.
     out_gain: float = 1.0       # volume of the mono mix to the headphones.
                                 # 1.0 = about as loud as the source. Values
                                 # above 1.0 are safe: the limiter protects the

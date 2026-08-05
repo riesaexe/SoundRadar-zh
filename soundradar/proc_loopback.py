@@ -284,7 +284,8 @@ class ProcessLoopbackCapture:
 
     def __init__(self, pid: int, samplerate: int = 48000, channels: int = 2,
                  include: bool = True, play_mono: bool = False,
-                 output_name: str = "Headphones", out_gain: float = 0.5):
+                 output_name: str = "Headphones", out_gain: float = 0.5,
+                 lift_db: float = 0.0):
         self.pid = pid
         self.include = include
         self.samplerate = samplerate
@@ -295,6 +296,7 @@ class ProcessLoopbackCapture:
         self.play_mono = play_mono
         self.output_name = output_name
         self.out_gain = out_gain
+        self.lift_db = lift_db
         self._lock = threading.Lock()
         self._levels = Levels()
         self._stop = threading.Event()
@@ -432,7 +434,7 @@ class ProcessLoopbackCapture:
         client.Start()
         ch = self.channels
         splitter = BandSplitter(self.samplerate)
-        mix = MonoMix(self.samplerate, self.out_gain)
+        mix = MonoMix(self.samplerate, self.out_gain, self.lift_db)
         try:
             while not self._stop.is_set():
                 if _kernel32.WaitForSingleObject(event, 200) != WAIT_OBJECT_0:
@@ -460,6 +462,7 @@ class ProcessLoopbackCapture:
                                 splitter.analyse(block))
                         if self.play_mono:
                             mix.out_gain = self.out_gain   # live volume changes
+                            mix.lift.amount_db = self.lift_db
                             mono = mix.process(block, labels_for(ch))
                             with self._buf_lock:
                                 self._buf.append(mono)

@@ -123,19 +123,69 @@ class PeakLimiter:
         return out
 
 
-class MonoMix:
-    """Downmix -> volume -> limiter. One place, so both capture backends give
-    the listener the same processed audio."""
+class QuietLift:
+    """Upward compression: raise QUIET audio, leave peaks alone.
 
-    def __init__(self, samplerate: int = 48000, out_gain: float = 1.0):
+    Volume cannot make the mix louder than full scale — past the point where
+    peaks reach the limiter's ceiling, more gain produces a bit-identical
+    output, so the control appears dead. The only way to genuinely increase
+    perceived loudness is to reduce the distance between the quiet parts and the
+    loud ones, which is also exactly what helps a hard-of-hearing listener pick
+    out a distant footstep or someone talking.
+
+    Gain is applied only below `threshold_db` and tapers to nothing at the
+    threshold, so transients keep their impact and the radar's dynamics are
+    unaffected (this is on the listening path only). Slow release keeps it from
+    pumping.
+    """
+
+    # Threshold/floor set the window over which the lift ramps in. The span has
+    # to be tight enough that genuinely quiet game audio (around -35 dBFS in the
+    # mix) receives most of the available boost — a wide span gave a distant
+    # footstep only a third of it, which is not worth a control.
+    def __init__(self, samplerate: int = 48000, amount_db: float = 0.0,
+                 threshold_db: float = -20.0, floor_db: float = -42.0,
+                 attack_ms: float = 20.0, release_ms: float = 300.0):
+        self.amount_db = amount_db
+        self.threshold_db = threshold_db
+        self.floor_db = floor_db
+        self._atk = float(np.exp(-1.0 / max(samplerate * attack_ms / 1000.0, 1.0)))
+        self._rel = float(np.exp(-1.0 / max(samplerate * release_ms / 1000.0, 1.0)))
+        self._env = 1e-6
+        self._gain_db = 0.0
+
+    def process(self, x: np.ndarray) -> np.ndarray:
+        if self.amount_db <= 0.01 or x.size == 0:
+            return x
+        # one envelope + one gain per block: cheap, and 10 ms blocks are short
+        # enough that per-sample smoothing buys nothing audible here.
+        level = float(np.sqrt(np.mean(x.astype(np.float64) ** 2)))
+        c = self._atk if level > self._env else self._rel
+        self._env = level + (self._env - level) * c
+        env_db = 20.0 * np.log10(max(self._env, 1e-9))
+        span = max(self.threshold_db - self.floor_db, 1.0)
+        below = min(max((self.threshold_db - env_db) / span, 0.0), 1.0)
+        target = self.amount_db * below
+        # ease toward the target so a sudden quiet passage doesn't jump
+        self._gain_db += (target - self._gain_db) * 0.25
+        return (x * (10.0 ** (self._gain_db / 20.0))).astype(np.float32)
+
+
+class MonoMix:
+    """Downmix -> volume -> lift quiet detail -> limiter. One place, so both
+    capture backends give the listener the same processed audio."""
+
+    def __init__(self, samplerate: int = 48000, out_gain: float = 1.0,
+                 lift_db: float = 0.0):
         self.out_gain = out_gain
+        self.lift = QuietLift(samplerate, lift_db)
         self.limiter = PeakLimiter(samplerate)
         self.peak_in = 0.0
 
     def process(self, block: np.ndarray, labels: list[str]) -> np.ndarray:
         mono = downmix_to_mono(block, labels) * self.out_gain
         self.peak_in = float(np.max(np.abs(mono))) if mono.size else 0.0
-        return self.limiter.process(mono)
+        return self.limiter.process(self.lift.process(mono))
 
 
 @dataclass
@@ -147,6 +197,7 @@ class RouterConfig:
     # 1.0 now means "about as loud as the source". The old 0.5 was chosen to
     # tame an un-normalised 6.2x sum and is not comparable.
     out_gain: float = 1.0
+    lift_db: float = 0.0            # upward compression, dB (see QuietLift)
     target_buffer_ms: float = 60.0  # latency cushion playback steers toward
     max_buffer_ms: float = 400.0    # hard safety cap (drift handled smoothly)
 
@@ -226,7 +277,7 @@ class MonoRouter:
         n = self.cfg.blocksize
         max_samples = int(self.cfg.max_buffer_ms / 1000 * self.cfg.samplerate)
         splitter = BandSplitter(self.cfg.samplerate)
-        mix = MonoMix(self.cfg.samplerate, self.cfg.out_gain)
+        mix = MonoMix(self.cfg.samplerate, self.cfg.out_gain, self.cfg.lift_db)
         with src.recorder(samplerate=self.cfg.samplerate, channels=None,
                           blocksize=n) as rec:
             while not self._stop.is_set():
@@ -247,6 +298,7 @@ class MonoRouter:
                     self._levels = Levels(rms, ch, labels, time.perf_counter(),
                                           splitter.analyse(data))
                 mix.out_gain = self.cfg.out_gain      # live volume changes
+                mix.lift.amount_db = self.cfg.lift_db
                 mono = mix.process(data, labels)
                 with self._buf_lock:
                     self._buf.append(mono)

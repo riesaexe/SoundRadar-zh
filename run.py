@@ -92,6 +92,16 @@ def _size_to_tick(size):
     return 0.7 + sz * 2.0
 
 
+def _lift_to_db(lift):
+    """0-100 -> dB of upward compression on the mix the listener hears.
+
+    Volume is powerless once peaks reach full scale (more gain in front of the
+    limiter produces a bit-identical output). Raising the quiet parts is the
+    only thing that genuinely increases how much can be heard.
+    """
+    return max(0.0, min(100.0, lift)) / 100.0 * 18.0
+
+
 def _colours(hex_str):
     near = QtGui.QColor(hex_str)
     if not near.isValid():
@@ -195,7 +205,8 @@ def main() -> int:
         # surround: device-loopback a 7.1 device + play full mono mix
         cap = MonoRouter(RouterConfig(source_name=cfg.capture_device,
                                       output_name=cfg.output_device,
-                                      out_gain=cfg.out_gain))
+                                      out_gain=cfg.out_gain,
+                                      lift_db=_lift_to_db(cfg.lift)))
         print(f"surround: '{cfg.capture_device}' -> mono mix to "
               f"'{cfg.output_device}'")
     else:
@@ -283,6 +294,11 @@ def main() -> int:
         if st.segments != cfg.segments:
             st.segments = cfg.segments
             overlay._rebuild_geometry()
+        lift_db = _lift_to_db(cfg.lift)
+        if hasattr(cap, "lift_db"):
+            cap.lift_db = lift_db
+        elif hasattr(cap, "cfg") and hasattr(cap.cfg, "lift_db"):
+            cap.cfg.lift_db = lift_db
         if hasattr(cap, "out_gain"):
             cap.out_gain = cfg.out_gain
         elif hasattr(cap, "cfg"):

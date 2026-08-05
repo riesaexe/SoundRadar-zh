@@ -353,13 +353,20 @@ class SettingsWindow(QtWidgets.QWidget):
             lambda t: self._set("output_device", t))
         g.addWidget(self._out, 1, 1, 1, 2)
 
-        self._row(g, 2, "Volume", "out_gain", 0, 200, mul=100,
+        self._row(g, 2, "Volume", "out_gain", 0, 100, mul=100,
                   tip="Loudness of the mono mix sent to your headphones. 100 = "
-                      "about as loud as the game itself. Above 100 is safe — a "
-                      "limiter holds the peaks instead of distorting them.")
-        outnote = QtWidgets.QLabel("Restart SoundRadar to apply an output change.")
+                      "as loud as it can go without distorting. It cannot go "
+                      "past full scale, so use 'Lift quiet' below to make things "
+                      "genuinely easier to hear.")
+        self._row(g, 3, "Lift quiet", "lift", 0, 100,
+                  tip="Raises quiet sounds toward the loud ones without letting "
+                      "peaks distort. This is what makes distant footsteps and "
+                      "speech audible — turning Volume up past full scale "
+                      "does nothing, this does.")
+        outnote = QtWidgets.QLabel("Volume and Lift apply live. Restart "
+                                   "SoundRadar to apply an output change.")
         outnote.setObjectName("hint"); outnote.setWordWrap(True)
-        g.addWidget(outnote, 3, 0, 1, 3)
+        g.addWidget(outnote, 4, 0, 1, 3)
         v.addWidget(disp)
 
         card = QtWidgets.QFrame(); card.setObjectName("card")
