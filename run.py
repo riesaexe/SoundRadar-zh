@@ -39,14 +39,26 @@ from soundradar.recorder import SessionRecorder
 
 
 def _sens_to_detect(sens):
-    """0-100 -> (onset_sigma, knee_sigma).
+    """0-100 -> (onset_sigma, knee_sigma, floor_db).
 
-    Sensitivity is how far a sound has to stand out from its band's normal
-    fluctuation before the radar shows it. High = distant/quiet cues register;
-    low = only obvious standouts do.
+    Sensitivity drives both routes a sound can light the radar by: how far it
+    must stand out from its band's own background (sigma), and how loud it must
+    simply be (floor_db). High = distant/quiet cues register; low = only
+    obvious sounds do.
     """
     sv = max(0.0, min(100.0, sens)) / 100.0
-    return 4.5 - sv * 3.3, 14.0 - sv * 8.0
+    return 4.5 - sv * 3.3, 14.0 - sv * 8.0, -44.0 - sv * 16.0
+
+
+def _adapt_to_weights(adapt):
+    """0-100 -> (adapt, abs_weight).
+
+    Adapt favours events over constant audio. It must never silence the
+    absolute route completely, or a sustained sound — an engine, ongoing
+    gunfire — disappears from the radar within a second.
+    """
+    a = max(0.0, min(100.0, adapt)) / 100.0
+    return a, 1.0 - 0.45 * a
 
 
 def _punch_to_exponent(punch):
@@ -122,13 +134,15 @@ def main() -> int:
     # all tunables come from the saved settings (edited live in the control
     # panel); CLI keeps the mode flags (--route-audio, --device, --process...).
     cfg = settings_mod.load()
-    onset_sigma, knee_sigma = _sens_to_detect(cfg.sensitivity)
+    onset_sigma, knee_sigma, floor_db = _sens_to_detect(cfg.sensitivity)
+    adapt, abs_weight = _adapt_to_weights(cfg.adapt)
     # Loudness drives block SIZE only. "Brightness" is a separate overlay
     # multiplier (st.brightness) so the two stay independent.
     acfg = AnalysisConfig(attack_ms=args.attack_ms, decay_ms=cfg.decay_ms,
                           onset_sigma=onset_sigma, knee_sigma=knee_sigma,
+                          floor_db=floor_db,
                           punch=_punch_to_exponent(cfg.punch),
-                          adapt=max(0.0, min(100.0, cfg.adapt)) / 100.0,
+                          adapt=adapt, abs_weight=abs_weight,
                           band_weights=profile_weights(cfg.listen))
     cli_capture = (args.all_apps or args.process or args.pid
                    or args.route_audio or args.device)
@@ -232,10 +246,11 @@ def main() -> int:
 
     def apply_settings():
         """Push the (possibly just-changed) settings into the live radar."""
-        acfg.onset_sigma, acfg.knee_sigma = _sens_to_detect(cfg.sensitivity)
+        (acfg.onset_sigma, acfg.knee_sigma,
+         acfg.floor_db) = _sens_to_detect(cfg.sensitivity)
         acfg.decay_ms = cfg.decay_ms
         acfg.punch = _punch_to_exponent(cfg.punch)
-        acfg.adapt = max(0.0, min(100.0, cfg.adapt)) / 100.0
+        acfg.adapt, acfg.abs_weight = _adapt_to_weights(cfg.adapt)
         acfg.band_weights = profile_weights(cfg.listen)
         st = overlay.style_
         st.tick_fraction, st.gamma = _size_to_tick_gamma(cfg.size)

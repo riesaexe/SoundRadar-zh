@@ -63,6 +63,18 @@ class AnalysisConfig:
     # that is QUIETER than the ambient bed in its band still register.
     onset_sigma: float = 2.0  # excursion before anything registers
     knee_sigma: float = 7.0   # excursion that counts as a full event
+    # How much of the ABSOLUTE level still lights a direction. The radar has to
+    # show where sound IS, not only where it changes: with detection purely
+    # differential, any sustained sound (an engine, ongoing gunfire, a vehicle
+    # to your left) is folded into the background within a second and vanishes.
+    # `adapt` scales this down to favour events, but never to zero.
+    abs_weight: float = 1.0
+    # dB above floor_db at which we are fully confident a direction has
+    # something in it. Detection ("is it there") saturates over this small
+    # range, while loudness ("how big") keeps using the full floor..ceil scale.
+    # Using one ramp for both made every block dim, because a moderate sound
+    # scored low on confidence AND low on size, and the two multiplied.
+    gate_db: float = 12.0
     min_rise_db: float = 1.0  # and it must be at least this many dB up on the
                               # background — the sigma test alone eventually
                               # fires on the wobble of a very steady band, and
@@ -204,12 +216,18 @@ class DirectionAnalyzer:
         db = 20.0 * np.log10(np.maximum(bands, 1e-7))
         z, mu = self._stats.update(db, dt_s, _adapt_to_rise_ms(cfg.adapt))
 
+        rng = max(cfg.ceil_db - cfg.floor_db, 1.0)
+        level = np.clip((db - cfg.floor_db) / rng, 0.0, 1.0)
+
+        # (a) differential: stands out from its OWN band's background. Finds
+        # quiet cues that absolute level cannot, e.g. a distant footstep under
+        # a louder broadband bed. Both gates must pass (see min_rise_db).
         span = max(cfg.knee_sigma - cfg.onset_sigma, 0.5)
-        detect = np.clip((z - cfg.onset_sigma) / span, 0.0, 1.0)
-        # both gates must pass (see min_rise_db)
-        rise = np.clip((db - mu) / max(cfg.min_rise_db, 0.05), 0.0, 1.0)
-        detect *= rise
-        detect[db < cfg.silence_db] = 0.0     # never chase dither/near-silence
+        diff = np.clip((z - cfg.onset_sigma) / span, 0.0, 1.0)
+        diff *= np.clip((db - mu) / max(cfg.min_rise_db, 0.05), 0.0, 1.0)
+
+        # (b) absolute: simply loud enough to matter, however long it lasts.
+        absolute = np.clip((db - cfg.floor_db) / max(cfg.gate_db, 1.0), 0.0, 1.0)
 
         # A sound present equally in every channel carries no direction, so
         # subtract the cross-channel average per band. LFE is non-directional
@@ -217,11 +235,17 @@ class DirectionAnalyzer:
         dirs = [i for i, l in enumerate(levels.labels[:levels.channels])
                 if l != "LFE"]
         if cfg.contrast > 0.0 and len(dirs) > 1:
-            base = detect[dirs].mean(axis=0) * cfg.contrast
-            detect[dirs] = np.clip(detect[dirs] - base, 0.0, 1.0)
+            for part in (diff, absolute):
+                base = part[dirs].mean(axis=0) * cfg.contrast
+                part[dirs] = np.clip(part[dirs] - base, 0.0, 1.0)
 
-        rng = max(cfg.ceil_db - cfg.floor_db, 1.0)
-        level = np.clip((db - cfg.floor_db) / rng, 0.0, 1.0) ** cfg.punch
+        # whichever route finds it — loud, or quiet but distinct. `adapt` biases
+        # away from the absolute route (favouring events) after the directional
+        # subtraction, so it trades the two off without dimming everything.
+        detect = np.maximum(diff, absolute * cfg.abs_weight)
+        detect[db < cfg.silence_db] = 0.0     # never chase dither/near-silence
+
+        level = level ** cfg.punch
         vis = cfg.quiet_floor + (1.0 - cfg.quiet_floor) * level
 
         val = (detect * vis) * w                   # (channels, bands)
