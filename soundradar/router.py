@@ -165,6 +165,9 @@ class MonoRouter:
         self.underruns = 0
         self.drops = 0
         self.recorder = None    # optional recorder.SessionRecorder (tuning)
+        self.error: str | None = None
+        self.capture_retries = 0
+        self.output_retries = 0
 
     # -- radar interface (drop-in for LoopbackCapture) -------------------
     def get_levels(self) -> Levels:
@@ -189,7 +192,31 @@ class MonoRouter:
         self._threads = []
 
     # -- threads ---------------------------------------------------------
+    # Both threads retry instead of dying. A thread that raises here takes out
+    # either the radar or ALL the audio the listener hears, and in a windowed
+    # build the traceback goes nowhere — the app just silently stops working.
+    # Anything recoverable (device in use, device removed, format change,
+    # VoiceMeeter restarting) must reconnect, and the last error is kept so the
+    # Check tab can say what is wrong.
     def _capture(self) -> None:
+        while not self._stop.is_set():
+            try:
+                self._capture_session()
+            except Exception as e:                     # noqa: BLE001
+                self.error = f"capture: {type(e).__name__}: {e}"
+                self.capture_retries += 1
+                self._stop.wait(0.5)
+
+    def _playback(self) -> None:
+        while not self._stop.is_set():
+            try:
+                self._playback_session()
+            except Exception as e:                     # noqa: BLE001
+                self.error = f"output: {type(e).__name__}: {e}"
+                self.output_retries += 1
+                self._stop.wait(0.5)
+
+    def _capture_session(self) -> None:
         if self.cfg.source_name is None:
             src = sc.get_microphone(id=str(sc.default_speaker().name),
                                     include_loopback=True)
@@ -208,9 +235,12 @@ class MonoRouter:
                     continue
                 ch = data.shape[1]
                 labels = labels_for(ch)
-                rec = self.recorder
-                if rec is not None:
-                    rec.write(data)
+                # NB: must not be named `rec` — that is the audio recorder this
+                # loop reads from, and shadowing it killed the capture thread
+                # after a single block.
+                session = self.recorder
+                if session is not None:
+                    session.write(data)
                 rms = np.sqrt(np.mean(np.square(data, dtype=np.float64),
                                       axis=0)).astype(np.float32)
                 with self._lock:
@@ -246,7 +276,7 @@ class MonoRouter:
             self.underruns += 1
         return out
 
-    def _playback(self) -> None:
+    def _playback_session(self) -> None:
         out = sc.get_speaker(self.cfg.output_name)
         n = self.cfg.blocksize
         sr = self.cfg.samplerate

@@ -448,9 +448,9 @@ class ProcessLoopbackCapture:
                             block = np.frombuffer(
                                 buf, dtype=np.float32).reshape(-1, ch)
                         self.frames_seen += nframes
-                        rec = self.recorder
-                        if rec is not None:
-                            rec.write(block)
+                        session = self.recorder
+                        if session is not None:
+                            session.write(block)
                         rms = np.sqrt(np.mean(
                             np.square(block, dtype=np.float64),
                             axis=0)).astype(np.float32)

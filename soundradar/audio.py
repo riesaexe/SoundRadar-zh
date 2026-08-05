@@ -212,9 +212,11 @@ class LoopbackCapture:
                 if data.size == 0:
                     continue
                 self.actual_channels = data.shape[1]
-                rec = self.recorder
-                if rec is not None:
-                    rec.write(data)
+                # NB: not `rec` — that name is the audio recorder this loop
+                # reads from (see the same bug fixed in router.py).
+                session = self.recorder
+                if session is not None:
+                    session.write(data)
                 rms = np.sqrt(np.mean(np.square(data, dtype=np.float64),
                                       axis=0))
                 with self._lock:
