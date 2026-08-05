@@ -43,10 +43,99 @@ DOWNMIX_WEIGHTS = {
 }
 
 
-def downmix_to_mono(frame: np.ndarray, labels: list[str]) -> np.ndarray:
-    w = np.array([DOWNMIX_WEIGHTS.get(lbl, 1.0) for lbl in labels],
-                 dtype=np.float32)
-    return frame.astype(np.float32) @ w
+def _weights(labels: list[str]) -> np.ndarray:
+    return np.array([DOWNMIX_WEIGHTS.get(lbl, 1.0) for lbl in labels],
+                    dtype=np.float32)
+
+
+def downmix_to_mono(frame: np.ndarray, labels: list[str],
+                    normalize: bool = True) -> np.ndarray:
+    """Sum all channels to one mono signal, at a sane level.
+
+    The raw weights sum to ~6.2 for 7.1, so a plain sum sends anything present
+    across many channels (ambience, engines, explosions — most loud content)
+    far past full scale. Dividing by the root-sum-square of the weights keeps
+    the LOUDNESS of the result about equal to the source for the normal case of
+    partly-correlated channels, instead of leaving the caller to pick a volume
+    that either distorts or buries the quiet detail.
+
+    Fully-correlated content can still exceed full scale after this, which is
+    what PeakLimiter is for — that residual must be limited, never clipped.
+    """
+    w = _weights(labels)
+    mono = frame.astype(np.float32) @ w
+    if normalize:
+        mono /= float(np.sqrt(np.sum(w * w)))
+    return mono
+
+
+class PeakLimiter:
+    """Keeps the mono mix under `ceiling` without hard clipping.
+
+    np.clip flattens every sample past full scale, which is heavy distortion on
+    exactly the loud wide sounds a surround mix produces most. This instead
+    turns the gain down just enough, just before it is needed:
+
+      * a peak follower with instant attack and exponential release tracks the
+        signal envelope;
+      * the signal itself is delayed by `lookahead_ms`, so the gain reduction
+        computed from a peak is already applied when that peak arrives at the
+        output — no overshoot, and no clicks from a late correction;
+      * gain recovers over `release_ms`, so a single transient does not duck
+        the following quiet detail for long.
+
+    Quiet material never reaches the ceiling, so it passes through untouched.
+    """
+
+    def __init__(self, samplerate: int = 48000, ceiling: float = 0.97,
+                 lookahead_ms: float = 2.0, release_ms: float = 120.0):
+        self.ceiling = float(ceiling)
+        self.n_look = max(1, int(samplerate * lookahead_ms / 1000.0))
+        self._decay = float(np.exp(-1.0 / max(samplerate * release_ms / 1000.0,
+                                              1.0)))
+        self._delay = np.zeros(self.n_look, dtype=np.float32)
+        self._env = 0.0
+        self.reductions = 0        # blocks where the limiter actually engaged
+
+    def process(self, x: np.ndarray) -> np.ndarray:
+        n = x.shape[0]
+        if n == 0:
+            return x
+        # envelope: env[i] = max_j |x[j]| * decay^(i-j), including prior state.
+        # Computed in closed form so no per-sample Python loop is needed.
+        r = self._decay
+        idx = np.arange(n + 1, dtype=np.float64)
+        scale = r ** (-idx)
+        seeded = np.concatenate(([self._env], np.abs(x).astype(np.float64)))
+        env = np.maximum.accumulate(seeded * scale) / scale
+        self._env = float(env[-1])
+        env = env[1:]
+
+        gain = np.minimum(1.0, self.ceiling / np.maximum(env, 1e-9))
+        if np.any(gain < 1.0):
+            self.reductions += 1
+
+        # delay the audio so each peak meets its own gain reduction
+        buf = np.concatenate((self._delay, x))
+        out = buf[:n].astype(np.float32, copy=True)
+        self._delay = buf[n:].copy()
+        out *= gain.astype(np.float32)
+        return out
+
+
+class MonoMix:
+    """Downmix -> volume -> limiter. One place, so both capture backends give
+    the listener the same processed audio."""
+
+    def __init__(self, samplerate: int = 48000, out_gain: float = 1.0):
+        self.out_gain = out_gain
+        self.limiter = PeakLimiter(samplerate)
+        self.peak_in = 0.0
+
+    def process(self, block: np.ndarray, labels: list[str]) -> np.ndarray:
+        mono = downmix_to_mono(block, labels) * self.out_gain
+        self.peak_in = float(np.max(np.abs(mono))) if mono.size else 0.0
+        return self.limiter.process(mono)
 
 
 @dataclass
@@ -55,7 +144,9 @@ class RouterConfig:
     blocksize: int = 480            # 10 ms
     source_name: str | None = None  # None -> default speaker loopback (VAIO3)
     output_name: str = "Headphones"
-    out_gain: float = 0.5
+    # 1.0 now means "about as loud as the source". The old 0.5 was chosen to
+    # tame an un-normalised 6.2x sum and is not comparable.
+    out_gain: float = 1.0
     target_buffer_ms: float = 60.0  # latency cushion playback steers toward
     max_buffer_ms: float = 400.0    # hard safety cap (drift handled smoothly)
 
@@ -108,6 +199,7 @@ class MonoRouter:
         n = self.cfg.blocksize
         max_samples = int(self.cfg.max_buffer_ms / 1000 * self.cfg.samplerate)
         splitter = BandSplitter(self.cfg.samplerate)
+        mix = MonoMix(self.cfg.samplerate, self.cfg.out_gain)
         with src.recorder(samplerate=self.cfg.samplerate, channels=None,
                           blocksize=n) as rec:
             while not self._stop.is_set():
@@ -124,8 +216,8 @@ class MonoRouter:
                 with self._lock:
                     self._levels = Levels(rms, ch, labels, time.perf_counter(),
                                           splitter.analyse(data))
-                mono = downmix_to_mono(data, labels) * self.cfg.out_gain
-                np.clip(mono, -1.0, 1.0, out=mono)
+                mix.out_gain = self.cfg.out_gain      # live volume changes
+                mono = mix.process(data, labels)
                 with self._buf_lock:
                     self._buf.append(mono)
                     self._buf_samples += mono.shape[0]

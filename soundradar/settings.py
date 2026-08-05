@@ -45,7 +45,10 @@ class Settings:
     capture_device: str = ""    # surround: name of the 7.1 virtual device
     output_device: str = "Headphones"  # where the mono mix plays (surround)
     # audio output
-    out_gain: float = 0.5       # volume of the mono mix to the headphones
+    out_gain: float = 1.0       # volume of the mono mix to the headphones.
+                                # 1.0 = about as loud as the source. Values
+                                # above 1.0 are safe: the limiter protects the
+                                # output instead of clipping it.
 
 
 def load() -> Settings:

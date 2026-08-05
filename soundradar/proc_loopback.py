@@ -33,7 +33,7 @@ import comtypes  # noqa: E402
 from comtypes import GUID, IUnknown, COMMETHOD, COMObject  # noqa: E402
 
 from .audio import BandSplitter, Levels, labels_for
-from .router import downmix_to_mono
+from .router import MonoMix
 
 # --- constants -------------------------------------------------------------
 AUDCLNT_SHAREMODE_SHARED = 0
@@ -432,6 +432,7 @@ class ProcessLoopbackCapture:
         client.Start()
         ch = self.channels
         splitter = BandSplitter(self.samplerate)
+        mix = MonoMix(self.samplerate, self.out_gain)
         try:
             while not self._stop.is_set():
                 if _kernel32.WaitForSingleObject(event, 200) != WAIT_OBJECT_0:
@@ -458,9 +459,8 @@ class ProcessLoopbackCapture:
                                 rms, ch, labels_for(ch), time.perf_counter(),
                                 splitter.analyse(block))
                         if self.play_mono:
-                            mono = downmix_to_mono(
-                                block, labels_for(ch)) * self.out_gain
-                            np.clip(mono, -1.0, 1.0, out=mono)
+                            mix.out_gain = self.out_gain   # live volume changes
+                            mono = mix.process(block, labels_for(ch))
                             with self._buf_lock:
                                 self._buf.append(mono)
                                 self._buf_samples += mono.shape[0]

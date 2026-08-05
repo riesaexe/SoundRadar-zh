@@ -353,7 +353,10 @@ class SettingsWindow(QtWidgets.QWidget):
             lambda t: self._set("output_device", t))
         g.addWidget(self._out, 1, 1, 1, 2)
 
-        self._row(g, 2, "Volume", "out_gain", 0, 100, mul=100)
+        self._row(g, 2, "Volume", "out_gain", 0, 200, mul=100,
+                  tip="Loudness of the mono mix sent to your headphones. 100 = "
+                      "about as loud as the game itself. Above 100 is safe — a "
+                      "limiter holds the peaks instead of distorting them.")
         outnote = QtWidgets.QLabel("Restart SoundRadar to apply an output change.")
         outnote.setObjectName("hint"); outnote.setWordWrap(True)
         g.addWidget(outnote, 3, 0, 1, 3)
