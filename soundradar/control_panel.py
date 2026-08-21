@@ -300,7 +300,8 @@ class SettingsWindow(QtWidgets.QWidget):
         self._mode = QtWidgets.QComboBox()
         self._mode.addItem("Stereo — no setup, left/right", "stereo")
         self._mode.addItem("Surround — 7.1 device, front/back", "surround")
-        self._mode.setCurrentIndex(1 if self.s.mode == "surround" else 0)
+        _i = self._mode.findData(self.s.mode)
+        self._mode.setCurrentIndex(_i if _i >= 0 else 0)
         self._mode.currentIndexChanged.connect(self._on_mode)
         g.addWidget(self._mode, 0, 1, 1, 2)
         g.addWidget(QtWidgets.QLabel("Device"), 1, 0)
@@ -312,6 +313,11 @@ class SettingsWindow(QtWidgets.QWidget):
         self._dev.currentTextChanged.connect(
             lambda t: self._set("capture_device", t))
         self._dev.setEnabled(self.s.mode == "surround")
+        self._mode.setToolTip(
+            "Stereo: no setup, left/right only. "
+            "Surround: needs a virtual 7.1 device (VoiceMeeter). "
+            "Front/back needs a real multichannel endpoint - Windows Sonic "
+            "cannot provide it (see proc_loopback.py).")
         g.addWidget(self._dev, 1, 1, 1, 2)
         note = QtWidgets.QLabel("Restart SoundRadar (tray ▸ Quit, reopen) to "
                                 "apply capture changes.")

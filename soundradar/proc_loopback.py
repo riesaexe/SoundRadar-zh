@@ -215,6 +215,14 @@ _ActivateAudioInterfaceAsync.argtypes = [
 ]
 
 
+# MEASURED LIMIT (2026-08-05): the Process Loopback API accepts STEREO ONLY.
+# Requesting 4, 6 or 8 channels fails activation with E_INVALIDARG
+# (0x80070057), whatever the endpoint or the app is rendering. So this path can
+# never supply front/back, and Windows Sonic does not change that: a game's 7.1
+# bed goes through the spatial renderer, and device-loopback of the headphone
+# endpoint only yields the post-HRTF stereo. Discrete surround requires a real
+# multichannel endpoint (VoiceMeeter VAIO3, Virtual Audio Cable, ...).
+# The >2 channel support in _make_format below is still used by device loopback.
 def _make_format(samplerate=48000, channels=2):
     """Float32 capture format. Stereo can use plain WAVEFORMATEX, but >2
     channels MUST be WAVEFORMATEXTENSIBLE with a channel mask or WASAPI
