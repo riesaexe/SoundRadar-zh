@@ -32,6 +32,11 @@ CHANNEL_ANGLES = {
     "L": 270.0, "R": 90.0,   # stereo fallback
 }
 
+# Angular half-width of a direction blob (degrees). Wide enough to span a
+# couple of blocks so the eye reads a position, tight enough that two separate
+# sounds stay separate.
+BLOB_WIDTH_DEG = 18.0
+
 # --- Win32 click-through ---------------------------------------------------
 GWL_EXSTYLE = -20
 WS_EX_LAYERED = 0x00080000
@@ -123,6 +128,7 @@ class OverlayWindow(QtWidgets.QWidget):
                          | QtCore.Qt.WindowType.Tool)
         self.style_ = style or OverlayStyle()
         self._intensity: dict[str, float] = {}
+        self._blobs: list = []
         self._lfe = 0.0
         self._ticks = []
         self._slot = 0.0
@@ -140,6 +146,22 @@ class OverlayWindow(QtWidgets.QWidget):
     def set_channel_intensities(self, values: dict[str, float],
                                 lfe: float = 0.0) -> None:
         self._intensity = dict(values)
+        self._blobs = []
+        self._lfe = max(0.0, min(1.0, lfe))
+        self.update()
+
+    def set_direction_blobs(self, blobs, lfe: float = 0.0) -> None:
+        """Light arbitrary compass bearings, as [(degrees, 0..1), ...].
+
+        Channel-based placement can only ever light the handful of angles the
+        layout defines — with stereo that is two, so the whole ring goes unused
+        and a centred sound lights hard-left and hard-right at once. A stereo
+        mix carries a continuous pan position, so it gets drawn where it
+        actually is instead.
+        """
+        self._blobs = [(float(a) % 360.0, max(0.0, min(1.0, float(v))))
+                       for a, v in blobs]
+        self._intensity = {}
         self._lfe = max(0.0, min(1.0, lfe))
         self.update()
 
@@ -176,6 +198,21 @@ class OverlayWindow(QtWidgets.QWidget):
         2 channels (stereo) it falls back to snapping to the nearest block.
         """
         out = [0.0] * len(self._ticks)
+
+        if self._blobs:
+            # each bearing lights a soft arc so a direction reads as a place on
+            # the ring rather than snapping to one block
+            for i, tk in enumerate(self._ticks):
+                th = tk[6]
+                best = 0.0
+                for ang, v in self._blobs:
+                    d = abs(ang - th)
+                    d = min(d, 360.0 - d)
+                    if d < BLOB_WIDTH_DEG * 2.5:
+                        best = max(best, v * math.exp(-0.5 * (d / BLOB_WIDTH_DEG) ** 2))
+                out[i] = best
+            return out
+
         chans = [(CHANNEL_ANGLES[l], min(1.0, v))
                  for l, v in self._intensity.items() if l in CHANNEL_ANGLES]
         if not chans:

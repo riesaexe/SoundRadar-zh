@@ -403,9 +403,21 @@ def main() -> int:
         if lv.channels and lv.channels != last["ch"]:
             last["ch"] = lv.channels
             print(f"capturing {lv.channels} channels: {lv.labels}")
-        raw = analyzer.update(lv, dt)
-        smoothed = env.update(raw, dt)
-        overlay.set_channel_intensities(smoothed, smoothed.get("LFE", 0.0))
+        if lv.channels == 2:
+            # stereo: place each band at its own pan position around the front
+            # arc, instead of collapsing everything onto two fixed points
+            blobs = analyzer.update_stereo(lv, dt)
+            sm_blobs = []
+            for ang, v in blobs:
+                key = round(ang / 5.0) * 5.0     # quantise so the envelope has
+                sm_blobs.append((key, v))        # a stable key to smooth on
+            smoothed = env.update({str(a): v for a, v in sm_blobs}, dt)
+            overlay.set_direction_blobs(
+                [(float(a), v) for a, v in smoothed.items() if v > 0.01])
+        else:
+            raw = analyzer.update(lv, dt)
+            smoothed = env.update(raw, dt)
+            overlay.set_channel_intensities(smoothed, smoothed.get("LFE", 0.0))
 
     timer = QtCore.QTimer()
     timer.timeout.connect(tick)

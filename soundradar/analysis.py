@@ -198,6 +198,7 @@ class DirectionAnalyzer:
     def __init__(self, cfg: AnalysisConfig):
         self.cfg = cfg
         self._stats = BandStatistics()
+        self._mid_stats = BandStatistics()     # stereo path (update_stereo)
         self._wide = AdaptiveBaseline(amount=cfg.adapt)
 
     def update(self, levels: Levels, dt_s: float) -> dict[str, float]:
@@ -252,6 +253,61 @@ class DirectionAnalyzer:
         best = val.max(axis=1)
         return {lbl: float(best[i])
                 for i, lbl in enumerate(levels.labels[:levels.channels])}
+
+    def update_stereo(self, levels: Levels, dt_s: float) -> list:
+        """Stereo -> a continuous direction per band, as (compass_deg, level).
+
+        A stereo game mix encodes direction as a LEVEL difference between the
+        two channels (and, for binaural mixes, a timing one). Treating L and R
+        as two fixed compass points throws essentially all of that away: a
+        centred sound lit hard-left AND hard-right at once, and a sound panned
+        30 degrees left was indistinguishable from one at 90.
+
+        Here each band is placed by its own pan position, so a low engine to
+        the left and a voice to the right appear at their own angles at the
+        same time. Front/back is not recoverable from two channels (a sound in
+        front and its mirror behind produce identical level differences), so
+        everything is placed across the FRONT arc: centre = top, full left =
+        9 o'clock, full right = 3 o'clock.
+        """
+        cfg = self.cfg
+        if levels.channels < 2 or levels.bands.size == 0:
+            return []
+        bands = np.asarray(levels.bands, dtype=np.float32)
+        if bands.shape[0] < 2:
+            return []
+        n_b = bands.shape[1]
+        w = np.asarray(cfg.band_weights, dtype=np.float32)
+        if w.size != n_b:
+            w = np.resize(w, n_b)
+
+        left = bands[0].astype(np.float64)
+        right = bands[1].astype(np.float64)
+        # power mean: the level of the band regardless of how it is panned
+        mid = np.sqrt((left * left + right * right) / 2.0)
+        db = 20.0 * np.log10(np.maximum(mid, 1e-7))[None, :]
+
+        z, mu = self._mid_stats.update(db, dt_s, _adapt_to_rise_ms(cfg.adapt))
+        span = max(cfg.knee_sigma - cfg.onset_sigma, 0.5)
+        diff = np.clip((z - cfg.onset_sigma) / span, 0.0, 1.0)
+        diff *= np.clip((db - mu) / max(cfg.min_rise_db, 0.05), 0.0, 1.0)
+        absolute = np.clip((db - cfg.floor_db) / max(cfg.gate_db, 1.0), 0.0, 1.0)
+        detect = np.maximum(diff, absolute * cfg.abs_weight)
+        detect[db < cfg.silence_db] = 0.0
+
+        rng = max(cfg.ceil_db - cfg.floor_db, 1.0)
+        level = np.clip((db - cfg.floor_db) / rng, 0.0, 1.0) ** cfg.punch
+        vis = cfg.quiet_floor + (1.0 - cfg.quiet_floor) * level
+        val = (detect * vis)[0] * w
+
+        # pan: -1 hard left, 0 centre, +1 hard right
+        total = left + right
+        pan = np.where(total > 1e-9, (right - left) / np.maximum(total, 1e-9), 0.0)
+        pan = np.clip(pan, -1.0, 1.0)
+        angle = (pan * 90.0) % 360.0
+
+        return [(float(angle[b]), float(val[b])) for b in range(n_b)
+                if val[b] > 0.01]
 
     # -- fallback: no band data available --------------------------------
     def _broadband(self, levels: Levels, dt_s: float) -> dict[str, float]:
