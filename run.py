@@ -102,6 +102,19 @@ def _lift_to_db(lift):
     return max(0.0, min(100.0, lift)) / 100.0 * 18.0
 
 
+def _same_device(a, b):
+    """True if two device names refer to the same endpoint.
+
+    Names are stored inconsistently ("Headphones" vs "Headphones (Realtek(R)
+    Audio)"), so a plain equality test would miss the dangerous case.
+    """
+    a = (a or "").strip().lower()
+    b = (b or "").strip().lower()
+    if not a or not b:
+        return False
+    return a == b or a in b or b in a
+
+
 def _colours(hex_str):
     near = QtGui.QColor(hex_str)
     if not near.isValid():
@@ -201,6 +214,18 @@ def main() -> int:
                                           out_gain=cfg.out_gain))
         else:
             cap = LoopbackCapture(CaptureConfig(device_name=args.device))
+    elif cfg.mode == "surround" and cfg.capture_device and _same_device(
+            cfg.capture_device, cfg.output_device):
+        # Capturing a device AND playing back into it is a feedback loop: our
+        # own output is captured, re-amplified and played again, building to
+        # full volume in the listener's headphones within a second. Never route
+        # audio in this configuration - fall back to reading the game without
+        # touching the audio path. (Device loopback is also taken after the
+        # Windows "Mono audio" downmix, so it carries no direction anyway.)
+        print(f"REFUSED: capture and output are the same device "
+              f"('{cfg.capture_device}') - that is a feedback loop.")
+        print("falling back to stereo (read-only, no audio routing)")
+        cap = ProcessLoopbackCapture(os.getpid(), include=False, channels=2)
     elif cfg.mode == "surround" and cfg.capture_device:
         # surround: device-loopback a 7.1 device + play full mono mix
         cap = MonoRouter(RouterConfig(source_name=cfg.capture_device,
