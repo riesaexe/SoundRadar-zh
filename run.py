@@ -437,8 +437,25 @@ def main() -> int:
                 key = round(ang / 5.0) * 5.0     # quantise so the envelope has
                 sm_blobs.append((key, v))        # a stable key to smooth on
             smoothed = env.update({str(a): v for a, v in sm_blobs}, dt)
-            overlay.set_direction_blobs(
-                [(float(a), v) for a, v in smoothed.items() if v > 0.01])
+            # Two channels cannot separate front from back: a sound 45 degrees
+            # ahead and one 135 degrees behind produce an identical level
+            # difference. Drawing only the front position silently presents a
+            # coin-flip as a fact - a sound directly BEHIND lit the top of the
+            # ring, reading as "in front". So each direction is drawn at its
+            # mirror too. On the pure left/right axis the mirror coincides with
+            # the original and nothing changes, which is correct: those
+            # bearings are genuinely unambiguous.
+            out_blobs = []
+            for a, v in smoothed.items():
+                if v <= 0.01:
+                    continue
+                ang = float(a) % 360.0
+                out_blobs.append((ang, v))
+                mirror = (180.0 - ang) % 360.0
+                sep = abs(((mirror - ang + 180.0) % 360.0) - 180.0)
+                if sep > 2.0:
+                    out_blobs.append((mirror, v))
+            overlay.set_direction_blobs(out_blobs)
         else:
             raw = analyzer.update(lv, dt)
             smoothed = env.update(raw, dt)
