@@ -45,6 +45,11 @@ LISTEN_PROFILES: dict[str, tuple[str, tuple[float, ...]]] = {
 }
 DEFAULT_PROFILE = "steps"
 
+# Level difference between the two channels, in dB, that places a sound fully
+# to one side. Game mixes typically span only a few dB, so this sets how much
+# of the ring a real stereo mix actually uses.
+ILD_FULL_DB = 7.0
+
 
 def profile_weights(key: str) -> tuple[float, ...]:
     return LISTEN_PROFILES.get(key, LISTEN_PROFILES[DEFAULT_PROFILE])[1]
@@ -300,10 +305,16 @@ class DirectionAnalyzer:
         vis = cfg.quiet_floor + (1.0 - cfg.quiet_floor) * level
         val = (detect * vis)[0] * w
 
-        # pan: -1 hard left, 0 centre, +1 hard right
-        total = left + right
-        pan = np.where(total > 1e-9, (right - left) / np.maximum(total, 1e-9), 0.0)
-        pan = np.clip(pan, -1.0, 1.0)
+        # Direction from the LEVEL DIFFERENCE in dB, scaled to the range real
+        # audio actually uses. Measured on a live game mix, the difference
+        # between the two channels runs about 1-6 dB; a normalised
+        # (R-L)/(R+L) pan only reaches +-1 when one channel is SILENT, so real
+        # content mapped to within ~10 degrees of centre and the whole ring
+        # collapsed into one bar at the top. ILD_FULL_DB is the difference that
+        # counts as fully left or fully right.
+        ild = (20.0 * np.log10(np.maximum(right, 1e-9))
+               - 20.0 * np.log10(np.maximum(left, 1e-9)))
+        pan = np.clip(ild / ILD_FULL_DB, -1.0, 1.0)
         angle = (pan * 90.0) % 360.0
 
         return [(float(angle[b]), float(val[b])) for b in range(n_b)
