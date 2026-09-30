@@ -3,7 +3,7 @@ chcp 65001 >nul
 title SoundRadar（关闭此窗口以停止）
 cd /d "%~dp0"
 echo 正在启动 SoundRadar……关闭此窗口即可停止。
-echo （环绕声模式需要先运行并配置 VoiceMeeter，详见 SETUP.md）
+echo （7.1 模式需要原生或虚拟 8 声道播放设备；推荐 VB-CABLE，详见 SETUP.md）
 REM No flags: capture mode, device, output and every tunable come from the
 REM settings saved by the control panel, so this and the Settings window can
 REM never disagree. (The old flags here were silently ignored.)

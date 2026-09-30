@@ -306,7 +306,7 @@ class SettingsWindow(QtWidgets.QWidget):
             lambda t: self._set("capture_device", t))
         self._dev.setEnabled(self.s.mode == "surround")
         self._mode.setToolTip(
-            "立体声：无需配置，只显示左右方向。环绕声：需要虚拟 7.1 声道设备（例如 VoiceMeeter）。要识别前后方向，采集设备必须提供真实的多声道音频；Windows Sonic 无法提供所需声道。详见 SETUP.md。")
+            "立体声：无需配置，只显示左右方向。环绕声：需要原生或虚拟的 7.1 播放端点（推荐 VB-CABLE，也可用 VoiceMeeter）。要识别前后方向，采集设备必须提供真实的多声道音频；Windows Sonic 无法提供所需声道。详见 SETUP.md。")
         g.addWidget(self._dev, 1, 1, 1, 2)
         note = QtWidgets.QLabel("更改采集模式或设备后，请在托盘菜单中退出并重新打开 SoundRadar。")
         note.setObjectName("hint"); note.setWordWrap(True)

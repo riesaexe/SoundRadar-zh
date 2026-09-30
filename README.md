@@ -8,6 +8,10 @@ SoundRadar 会把游戏中的环绕声转换成屏幕边缘的方向雷达，让
 
 ![平台：Windows](https://img.shields.io/badge/平台-Windows-blue) ![许可证：MIT](https://img.shields.io/badge/许可证-MIT-green)
 
+## 下载
+
+Windows x64 压缩包见 [GitHub Releases](https://github.com/riesaexe/SoundRadar-zh/releases/latest)。下载后解压整个文件夹并运行 `SoundRadar.exe`，无需另装 Python。完整 7.1 模式的音频设备配置见 [设置指南](SETUP.md)。
+
 ## 功能
 
 - **真实环绕声雷达**：接收 7.1 声道音频时显示前、后、左、右方向；立体声模式显示左右方向。
@@ -31,7 +35,7 @@ pip install -r requirements.txt
 python run.py --all-apps
 ```
 
-设置完整 7.1 模式前，请先按 [SETUP.md](SETUP.md) 配好 VoiceMeeter 和游戏输出，再从托盘菜单打开“设置”，选择“环绕声”模式、采集设备和耳机播放设备。保存后重启 SoundRadar。
+设置完整 7.1 模式前，请先按 [SETUP.md](SETUP.md) 配好原生 7.1 设备或 VB-CABLE（VoiceMeeter Potato 也可选），并设置游戏输出；然后从托盘菜单打开“设置”，选择“环绕声”模式、采集设备和耳机播放设备。保存后重启 SoundRadar。
 
 运行游戏时请使用“无边框窗口”模式。SoundRadar 启动后会缩到系统托盘；右键托盘图标可打开“设置”、暂停雷达或退出。也可以运行 `SoundRadar.bat`。
 

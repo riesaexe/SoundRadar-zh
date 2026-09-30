@@ -1,5 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import os
+
 
 a = Analysis(
     ['run.py'],
@@ -9,11 +11,20 @@ a = Analysis(
     hiddenimports=['soundcard', 'comtypes'],
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=['pyi_rth_soundradar.py'],
     excludes=[],
     noarchive=False,
     optimize=0,
 )
+
+# PyInstaller can resolve Qt's ICU import to an unrelated third-party ICU DLL
+# found on the build machine's PATH. Qt expects the unversioned ICU exports
+# provided by Windows, so keep those host DLLs out of the redistributable.
+a.binaries = [
+    entry for entry in a.binaries
+    if not os.path.basename(entry[0]).lower().startswith("icu")
+]
+
 pyz = PYZ(a.pure)
 
 exe = EXE(
