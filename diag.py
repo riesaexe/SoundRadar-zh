@@ -1,15 +1,12 @@
-"""SoundRadar capture diagnostic.
+"""SoundRadar 音频采集诊断。
 
-Shows what audio SoundRadar is receiving from your configured capture device,
-so you can answer two questions:
+显示 SoundRadar 从所选采集设备收到的音频，用于确认：
+  1. 是否收到声音（显示“静音”代表没有音频）。
+  2. 是否为真实环绕声（声道差异很小表示音频可能已合并为单声道）。
 
-  1. Is ANY audio arriving?       (line shows "...silence..." = nothing)
-  2. REAL surround or mono?       (spread small = collapsed to mono)
-
-Run:  python diag.py
-Play a game / video with clearly directional sound while it runs.
-It prints one line ~twice a second and stops itself after ~90 seconds
-(or press Ctrl-C anytime).
+运行：python diag.py
+运行时播放方向明确的游戏或视频声音。程序每秒约输出两行，并在约 90 秒后
+自动停止；也可以随时按 Ctrl+C 结束。
 """
 
 from __future__ import annotations
@@ -31,14 +28,15 @@ RUN_SECONDS = 90.0
 
 def main() -> None:
     s = settings_mod.load()
-    print(f"mode            : {s.mode}")
-    print(f"capture_device  : {s.capture_device or '(default speaker loopback)'}")
+    mode = "环绕声" if s.mode == "surround" else "立体声"
+    print(f"采集模式：{mode}")
+    print(f"采集设备：{s.capture_device or '默认扬声器回环'}")
     print()
 
-    print("=== Loopback devices available ===")
+    print("=== 可用的回环采集设备 ===")
     for m in sc.all_microphones(include_loopback=True):
-        loop = " [loopback]" if getattr(m, "isloopback", False) else ""
-        print(f"  ch={m.channels:<2} {m.name}{loop}")
+        loop = " [回环]" if getattr(m, "isloopback", False) else ""
+        print(f"  声道数={m.channels:<2} {m.name}{loop}")
     print()
 
     name = s.capture_device or None
@@ -49,13 +47,13 @@ def main() -> None:
         else:
             mic = sc.get_microphone(id=name, include_loopback=True)
     except Exception as e:  # noqa: BLE001
-        print(f"!! Could not open '{name}': {e}")
+        print(f"！！无法打开设备“{name}”：{e}")
         sys.exit(1)
 
     channels = mic.channels
     labels = labels_for(channels)
-    print(f"Capturing '{mic.name}'  ({channels} channels)")
-    print("Play directional sound. Each line shows the loudest channels.\n")
+    print(f"正在采集“{mic.name}”（{channels} 个声道）")
+    print("播放方向明显的声音，每行会列出音量最大的声道。\n")
 
     peak = np.zeros(channels, dtype=np.float64)
     last_print = 0.0
@@ -78,7 +76,7 @@ def main() -> None:
                 db = rms_to_dbfs(peak.astype(np.float32))
                 active = db > -55.0
                 if not active.any():
-                    print("  ...silence (no audio on this device)...")
+                    print("  ……静音（此设备没有收到音频）……")
                     continue
 
                 spread = float(db[active].max() - db[active].min())
@@ -90,11 +88,11 @@ def main() -> None:
                         continue
                     lab = labels[i] if i < len(labels) else f"ch{i}"
                     parts.append(f"{lab}={db[i]:.0f}")
-                tag = "SURROUND" if spread > 6.0 else "mono/uniform"
+                tag = "环绕声" if spread > 6.0 else "单声道/声道相同"
                 print(f"  [{tag:>12}] spread={spread:4.1f}dB  " + "  ".join(parts))
         except KeyboardInterrupt:
             pass
-    print("\nstopped.")
+    print("\n已停止。")
 
 
 if __name__ == "__main__":

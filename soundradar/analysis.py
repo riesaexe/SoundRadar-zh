@@ -39,9 +39,9 @@ from .audio import BAND_NAMES, Levels
 # What to emphasise, as a weight per band of audio.BANDS:
 #   low(20-120) thump(120-500) voice(500-2k) edge(2k-6k) air(6k-16k)
 LISTEN_PROFILES: dict[str, tuple[str, tuple[float, ...]]] = {
-    "steps": ("Footsteps & voices", (0.25, 1.0, 1.0, 1.0, 0.55)),
-    "all":   ("Everything",         (1.0, 1.0, 1.0, 1.0, 1.0)),
-    "boom":  ("Explosions & vehicles", (1.0, 0.9, 0.45, 0.3, 0.2)),
+    "steps": ("脚步声和语音", (0.25, 1.0, 1.0, 1.0, 0.55)),
+    "all":   ("全部声音", (1.0, 1.0, 1.0, 1.0, 1.0)),
+    "boom":  ("爆炸声和载具", (1.0, 0.9, 0.45, 0.3, 0.2)),
 }
 DEFAULT_PROFILE = "steps"
 

@@ -125,20 +125,20 @@ def _colours(hex_str):
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--list", action="store_true")
+    ap = argparse.ArgumentParser(description="SoundRadar 游戏声音方向雷达")
+    ap.add_argument("--list", action="store_true", help="列出可用的回环采集设备并退出")
     # per-application capture (recommended; pre-mono, no audio changes)
     ap.add_argument("--process", default=None,
-                    help="capture this app by exe name (e.g. stalker2)")
+                    help="按可执行文件名采集指定应用的音频，例如 stalker2")
     ap.add_argument("--pid", type=int, default=None,
-                    help="capture this exact process id")
+                    help="采集指定进程 ID 的音频")
     ap.add_argument("--all-apps", action="store_true",
-                    help="capture all audio except SoundRadar itself")
+                    help="采集除 SoundRadar 自身以外的所有系统音频")
     ap.add_argument("--channels", type=int, default=2,
-                    help="channels to capture (2 stereo, 8 for 7.1 surround)")
-    ap.add_argument("--device", default=None, help="loopback device name")
+                    help="采集声道数（立体声为 2，7.1 环绕声为 8）")
+    ap.add_argument("--device", default=None, help="回环采集设备名称")
     ap.add_argument("--seconds", type=float, default=0.0,
-                    help="auto-close after N seconds (0 = run until Ctrl+C)")
+                    help="运行 N 秒后自动退出（0 表示持续运行，按 Ctrl+C 停止）")
     # analysis
     ap.add_argument("--floor-db", type=float, default=-55.0)
     ap.add_argument("--ceil-db", type=float, default=-8.0)
@@ -146,32 +146,30 @@ def main() -> int:
     ap.add_argument("--attack-ms", type=float, default=25.0)
     ap.add_argument("--decay-ms", type=float, default=450.0)
     ap.add_argument("--sensitivity", type=float, default=50.0,
-                    help="0-100. Higher = reacts to more/quieter sounds; "
-                         "lower = only the loudest, most directional sounds.")
+                    help="范围 0–100。数值越高，越容易显示轻声；数值越低，只显示较响且方向明显的声音。")
     ap.add_argument("--contrast", type=float, default=None,
-                    help="advanced: override ambient suppression (0..1)")
+                    help="高级选项：覆盖环境底噪抑制强度（0–1）")
     ap.add_argument("--adapt", type=float, default=60.0,
-                    help="0-100. Favor sound CHANGES/events over constant audio "
-                         "(stops a steady front bed from always dominating).")
+                    help="范围 0–100。优先显示变化和突发声音，降低持续背景音的影响。")
     # overlay
     ap.add_argument("--segments", type=int, default=9,
-                    help="number of compass-bearing blocks around the border")
+                    help="屏幕边缘雷达块的数量")
     ap.add_argument("--depth", type=int, default=29,
-                    help="fixed inward thickness of each block (px)")
+                    help="雷达块向屏幕内侧延伸的厚度（像素）")
     ap.add_argument("--size", type=float, default=70.0,
-                    help="0-100. How big/dramatically blocks grow with loudness.")
+                    help="范围 0–100。控制雷达块随声音变响而放大的幅度。")
     # audio routing (SoundRadar plays the full mono mix to your headphones)
     ap.add_argument("--route-audio", action="store_true",
-                    help="play a full mono mix of all channels to --output")
+                    help="将所有采集声道混成单声道并播放到 --output 指定设备")
     ap.add_argument("--output", default="Headphones",
-                    help="physical output device for the mono mix")
+                    help="播放单声道混音的输出设备")
     ap.add_argument("--out-gain", type=float, default=0.5)
     args = ap.parse_args()
 
     if args.list:
-        print("Loopback devices:")
+        print("可用的回环采集设备：")
         for m in list_loopback_devices():
-            print(f"  channels={m.channels:2}  {m.name}")
+            print(f"  声道数={m.channels:2}  {m.name}")
         return 0
 
     # all tunables come from the saved settings (edited live in the control
@@ -200,7 +198,7 @@ def main() -> int:
             else:
                 pids = find_process_pids(args.process)
                 if not pids:
-                    print(f"no running process matching '{args.process}'")
+                    print(f"没有找到名称匹配“{args.process}”的运行中进程。")
                     return 1
                 pid, include, desc = pids[0], True, args.process
             cap = ProcessLoopbackCapture(pid, channels=args.channels,
@@ -222,9 +220,8 @@ def main() -> int:
         # audio in this configuration - fall back to reading the game without
         # touching the audio path. (Device loopback is also taken after the
         # Windows "Mono audio" downmix, so it carries no direction anyway.)
-        print(f"REFUSED: capture and output are the same device "
-              f"('{cfg.capture_device}') - that is a feedback loop.")
-        print("falling back to stereo (read-only, no audio routing)")
+        print(f"已拒绝启动：采集设备和播放设备相同（“{cfg.capture_device}”），会造成音频反馈。")
+        print("改用立体声只读采集，不路由音频。")
         cap = ProcessLoopbackCapture(os.getpid(), include=False, channels=2)
     elif cfg.mode == "surround" and cfg.capture_device:
         # surround: device-loopback a 7.1 device + play full mono mix
@@ -232,12 +229,11 @@ def main() -> int:
                                       output_name=cfg.output_device,
                                       out_gain=cfg.out_gain,
                                       lift_db=_lift_to_db(cfg.lift)))
-        print(f"surround: '{cfg.capture_device}' -> mono mix to "
-              f"'{cfg.output_device}'")
+        print(f"环绕声采集：{cfg.capture_device} → 单声道混音播放到 {cfg.output_device}")
     else:
         # stereo: capture all system audio (pre-mono), no audio changes
         cap = ProcessLoopbackCapture(os.getpid(), include=False, channels=2)
-        print("stereo: all system audio (no audio changes)")
+        print("立体声采集：所有系统音频（不更改音频路由）")
     cap.start()
 
     tick_fraction = _size_to_tick(cfg.size)
@@ -277,25 +273,25 @@ def main() -> int:
     tray = QtWidgets.QSystemTrayIcon(_app_icon)
     tray.setToolTip("SoundRadar")
     menu = QtWidgets.QMenu()
-    act_pause = menu.addAction("Pause overlay")
+    act_pause = menu.addAction("暂停雷达浮层")
 
     def _toggle_pause():
         if overlay.isVisible():
             overlay.hide()
-            act_pause.setText("Resume overlay")
+            act_pause.setText("恢复雷达浮层")
         else:
             overlay.show()
-            act_pause.setText("Pause overlay")
+            act_pause.setText("暂停雷达浮层")
     act_pause.triggered.connect(_toggle_pause)
-    menu.addAction("Settings…").triggered.connect(lambda: open_settings())
+    menu.addAction("设置…").triggered.connect(lambda: open_settings())
     menu.addSeparator()
-    menu.addAction("Quit SoundRadar").triggered.connect(app.quit)
+    menu.addAction("退出 SoundRadar").triggered.connect(app.quit)
     tray.setContextMenu(menu)
     tray.activated.connect(
         lambda reason: _toggle_pause()
         if reason == QtWidgets.QSystemTrayIcon.ActivationReason.Trigger else None)
     tray.show()
-    tray.showMessage("SoundRadar", "Running. Right-click the tray dot to quit.",
+    tray.showMessage("SoundRadar", "程序正在运行。右键点击托盘图标可退出。",
                      QtWidgets.QSystemTrayIcon.MessageIcon.Information, 3000)
 
     env = DirectionEnvelopes(acfg)
@@ -427,7 +423,7 @@ def main() -> int:
         lv = cap.get_levels()
         if lv.channels and lv.channels != last["ch"]:
             last["ch"] = lv.channels
-            print(f"capturing {lv.channels} channels: {lv.labels}")
+            print(f"正在采集 {lv.channels} 个声道：{lv.labels}")
         if lv.channels == 2:
             # stereo: place each band at its own pan position around the front
             # arc, instead of collapsing everything onto two fixed points
@@ -481,7 +477,7 @@ def main() -> int:
     kick.timeout.connect(lambda: None)
     kick.start(200)
 
-    print("SoundRadar running. Ctrl+C to stop.")
+    print("SoundRadar 正在运行。按 Ctrl+C 停止。")
     try:
         rc = app.exec()
     finally:

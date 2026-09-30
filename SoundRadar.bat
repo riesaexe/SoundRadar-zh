@@ -1,15 +1,16 @@
 @echo off
-title SoundRadar  (close this window to stop)
+chcp 65001 >nul
+title SoundRadar（关闭此窗口以停止）
 cd /d "%~dp0"
-echo Starting SoundRadar... close this window to stop.
-echo (Surround mode needs VoiceMeeter running and set up - see SETUP.md)
+echo 正在启动 SoundRadar……关闭此窗口即可停止。
+echo （环绕声模式需要先运行并配置 VoiceMeeter，详见 SETUP.md）
 REM No flags: capture mode, device, output and every tunable come from the
 REM settings saved by the control panel, so this and the Settings window can
 REM never disagree. (The old flags here were silently ignored.)
 python run.py
 if errorlevel 1 (
   echo.
-  echo SoundRadar exited with an error - see the messages above.
-  echo If it could not open the audio device, check the SETUP.md checklist.
+  echo SoundRadar 已出错退出，请查看上方信息。
+  echo 如果无法打开音频设备，请检查 SETUP.md 中的设置步骤。
   pause
 )

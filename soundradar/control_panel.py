@@ -113,24 +113,23 @@ class SettingsWindow(QtWidgets.QWidget):
         root.addLayout(self._preset_bar())
 
         if on_test is not None:
-            tb = QtWidgets.QPushButton("◎   Test radar")
+            tb = QtWidgets.QPushButton("◎   测试雷达")
             tb.setObjectName("accent")
-            tb.setToolTip("Sweep a sound around the ring for ~6s — see and tune "
-                          "the radar without a game.")
+            tb.setToolTip("让测试声绕雷达移动约 6 秒，无需启动游戏即可预览并调整雷达。")
             tb.clicked.connect(lambda: self.on_test())
             root.addWidget(tb)
 
         # Every tab scrolls: the window can then be shrunk to any height (or
         # opened on a short screen) without ever clipping its content.
         tabs = QtWidgets.QTabWidget()
-        tabs.addTab(self._scrollable(self._radar_tab()), "Radar")
-        tabs.addTab(self._scrollable(self._setup_tab()), "Setup")
-        tabs.addTab(self._scrollable(self._diag_tab()), "Check")
+        tabs.addTab(self._scrollable(self._radar_tab()), "雷达")
+        tabs.addTab(self._scrollable(self._setup_tab()), "设置")
+        tabs.addTab(self._scrollable(self._diag_tab()), "检测")
         if self._rec is not None:
-            tabs.addTab(self._scrollable(self._tune_tab()), "Tune")
+            tabs.addTab(self._scrollable(self._tune_tab()), "调音")
         root.addWidget(tabs, 1)
 
-        foot = QtWidgets.QLabel("Changes apply live and save automatically.")
+        foot = QtWidgets.QLabel("修改会立即生效并自动保存。")
         foot.setObjectName("hint")
         root.addWidget(foot)
 
@@ -191,15 +190,15 @@ class SettingsWindow(QtWidgets.QWidget):
     # -- presets ---------------------------------------------------------
     def _preset_bar(self):
         row = QtWidgets.QHBoxLayout()
-        row.addWidget(QtWidgets.QLabel("Preset"))
+        row.addWidget(QtWidgets.QLabel("预设"))
         self._preset_combo = QtWidgets.QComboBox()
         self._reload_preset_combo()
         self._preset_combo.activated.connect(self._on_preset_pick)
         row.addWidget(self._preset_combo, 1)
-        save = QtWidgets.QPushButton("Save…")
+        save = QtWidgets.QPushButton("保存…")
         save.clicked.connect(self._save_preset)
         row.addWidget(save)
-        dele = QtWidgets.QPushButton("Delete")
+        dele = QtWidgets.QPushButton("删除")
         dele.clicked.connect(self._delete_preset)
         row.addWidget(dele)
         return row
@@ -207,7 +206,7 @@ class SettingsWindow(QtWidgets.QWidget):
     def _reload_preset_combo(self):
         self._preset_combo.blockSignals(True)
         self._preset_combo.clear()
-        self._preset_combo.addItem("— choose preset —")
+        self._preset_combo.addItem("— 选择预设 —")
         for name in sorted(self._presets):
             self._preset_combo.addItem(name)
         self._preset_combo.setCurrentIndex(0)
@@ -224,8 +223,8 @@ class SettingsWindow(QtWidgets.QWidget):
         self._refresh()
 
     def _save_preset(self):
-        name, ok = QtWidgets.QInputDialog.getText(self, "Save preset",
-                                                  "Preset name:")
+        name, ok = QtWidgets.QInputDialog.getText(self, "保存预设",
+                                                  "预设名称：")
         name = name.strip()
         if not ok or not name:
             return
@@ -247,42 +246,35 @@ class SettingsWindow(QtWidgets.QWidget):
         v = QtWidgets.QVBoxLayout(w)
         v.setContentsMargins(12, 8, 12, 12); v.setSpacing(12)
 
-        beh = self._card("Behaviour"); g = beh.layout()
-        self._row(g, 0, "Sensitivity", "sensitivity", 0, 100,
-                  tip="How far above its own background a sound must stand to "
-                      "show. Higher picks up distant footsteps and quiet "
-                      "voices; lower shows only obvious sounds.")
-        self._row(g, 1, "Adapt", "adapt", 0, 100,
-                  tip="How quickly constant audio (engine, wind, music) is "
-                      "treated as background and stops lighting the radar.")
-        self._row(g, 2, "Punch", "punch", 0, 100,
-                  tip="How much bigger loud sounds react than ordinary ones. "
-                      "0 = every detected sound draws the same size; higher = "
-                      "gunfire and explosions dwarf footsteps.")
-        self._row(g, 3, "Fade", "decay_ms", 100, 900,
-                  tip="How slowly a block fades once the sound stops.")
-        g.addWidget(QtWidgets.QLabel("Listen for"), 4, 0)
+        beh = self._card("声音识别"); g = beh.layout()
+        self._row(g, 0, "灵敏度", "sensitivity", 0, 100,
+                  tip="声音高于环境底噪多少才会显示。数值越高，越容易发现远处脚步声和轻声说话；数值越低，只显示明显的声音。")
+        self._row(g, 1, "环境适应", "adapt", 0, 100,
+                  tip="持续的声音（引擎、风声、音乐）被识别为背景并逐渐停止点亮雷达的速度。")
+        self._row(g, 2, "强弱对比", "punch", 0, 100,
+                  tip="较响的声音比普通声音显示得大多少。0 表示所有声音大小相同；数值越高，枪声和爆炸相对脚步声越醒目。")
+        self._row(g, 3, "消退速度", "decay_ms", 100, 900,
+                  tip="声音停止后，雷达亮块消退得有多慢。")
+        g.addWidget(QtWidgets.QLabel("重点声音"), 4, 0)
         self._listen = QtWidgets.QComboBox()
         for key, (label, _w) in LISTEN_PROFILES.items():
             self._listen.addItem(label, key)
         idx = self._listen.findData(self.s.listen)
         self._listen.setCurrentIndex(idx if idx >= 0 else 0)
         self._listen.setToolTip(
-            "Which frequencies matter. 'Footsteps & voices' de-emphasises "
-            "rumble so a quiet footstep or proximity chat isn't buried under "
-            "engine and explosion noise.")
+            "选择优先显示的声音频段。“脚步声和语音”会降低低频轰鸣的影响，避免轻微脚步声或近距离语音被引擎和爆炸声盖住。")
         self._listen.currentIndexChanged.connect(
             lambda i: self._set("listen", self._listen.itemData(i)))
         g.addWidget(self._listen, 4, 1, 1, 2)
         v.addWidget(beh)
 
-        app = self._card("Appearance"); g = app.layout()
-        self._row(g, 0, "Size", "size", 0, 100)
-        self._row(g, 1, "Brightness", "gain", 50, 400, mul=100)
-        self._row(g, 2, "Blocks", "segments", 6, 30, integer=True)
-        self._row(g, 3, "Thickness", "thickness", 8, 70, integer=True)
-        self._row(g, 4, "Opacity", "opacity", 25, 100, mul=100)
-        g.addWidget(QtWidgets.QLabel("Colour"), 5, 0)
+        app = self._card("外观"); g = app.layout()
+        self._row(g, 0, "大小", "size", 0, 100)
+        self._row(g, 1, "亮度", "gain", 50, 400, mul=100)
+        self._row(g, 2, "雷达格数", "segments", 6, 30, integer=True)
+        self._row(g, 3, "条块厚度", "thickness", 8, 70, integer=True)
+        self._row(g, 4, "不透明度", "opacity", 25, 100, mul=100)
+        g.addWidget(QtWidgets.QLabel("颜色"), 5, 0)
         self._sw = QtWidgets.QPushButton(); self._sw.setFixedSize(54, 22)
         self._sw.clicked.connect(self._pick_colour); self._paint_swatch()
         g.addWidget(self._sw, 5, 1, QtCore.Qt.AlignmentFlag.AlignLeft)
@@ -295,38 +287,34 @@ class SettingsWindow(QtWidgets.QWidget):
         v = QtWidgets.QVBoxLayout(w)
         v.setContentsMargins(12, 8, 12, 12); v.setSpacing(12)
 
-        cap = self._card("Capture"); g = cap.layout()
-        g.addWidget(QtWidgets.QLabel("Mode"), 0, 0)
+        cap = self._card("音频采集"); g = cap.layout()
+        g.addWidget(QtWidgets.QLabel("模式"), 0, 0)
         self._mode = QtWidgets.QComboBox()
-        self._mode.addItem("Stereo — no setup, left/right", "stereo")
-        self._mode.addItem("Surround — 7.1 device, front/back", "surround")
+        self._mode.addItem("立体声 — 无需设置，仅左右方向", "stereo")
+        self._mode.addItem("环绕声 — 7.1 声道，支持前后方向", "surround")
         _i = self._mode.findData(self.s.mode)
         self._mode.setCurrentIndex(_i if _i >= 0 else 0)
         self._mode.currentIndexChanged.connect(self._on_mode)
         g.addWidget(self._mode, 0, 1, 1, 2)
-        g.addWidget(QtWidgets.QLabel("Device"), 1, 0)
+        g.addWidget(QtWidgets.QLabel("采集设备"), 1, 0)
         self._dev = QtWidgets.QComboBox()
         names = [m.name for m in list_loopback_devices()]
-        self._dev.addItems(names or ["(no loopback devices found)"])
+        self._dev.addItems(names or ["（未找到回环采集设备）"])
         if self.s.capture_device in names:
             self._dev.setCurrentText(self.s.capture_device)
         self._dev.currentTextChanged.connect(
             lambda t: self._set("capture_device", t))
         self._dev.setEnabled(self.s.mode == "surround")
         self._mode.setToolTip(
-            "Stereo: no setup, left/right only. "
-            "Surround: needs a virtual 7.1 device (VoiceMeeter). "
-            "Front/back needs a real multichannel endpoint - Windows Sonic "
-            "cannot provide it (see proc_loopback.py).")
+            "立体声：无需配置，只显示左右方向。环绕声：需要虚拟 7.1 声道设备（例如 VoiceMeeter）。要识别前后方向，采集设备必须提供真实的多声道音频；Windows Sonic 无法提供所需声道。详见 SETUP.md。")
         g.addWidget(self._dev, 1, 1, 1, 2)
-        note = QtWidgets.QLabel("Restart SoundRadar (tray ▸ Quit, reopen) to "
-                                "apply capture changes.")
+        note = QtWidgets.QLabel("更改采集模式或设备后，请在托盘菜单中退出并重新打开 SoundRadar。")
         note.setObjectName("hint"); note.setWordWrap(True)
         g.addWidget(note, 2, 0, 1, 3)
         v.addWidget(cap)
 
-        disp = self._card("Display & audio"); g = disp.layout()
-        g.addWidget(QtWidgets.QLabel("Monitor"), 0, 0)
+        disp = self._card("显示与音频输出"); g = disp.layout()
+        g.addWidget(QtWidgets.QLabel("显示器"), 0, 0)
         screens = QtWidgets.QApplication.instance().screens()
         combo = QtWidgets.QComboBox()
         for i, sc in enumerate(screens):
@@ -338,7 +326,7 @@ class SettingsWindow(QtWidgets.QWidget):
             lambda idx: self._set("monitor", combo.itemData(idx)))
         g.addWidget(combo, 0, 1, 1, 2)
 
-        g.addWidget(QtWidgets.QLabel("Output"), 1, 0)
+        g.addWidget(QtWidgets.QLabel("播放设备"), 1, 0)
         self._out = QtWidgets.QComboBox()
         try:
             out_names = [s.name for s in list_output_devices()]
@@ -353,24 +341,16 @@ class SettingsWindow(QtWidgets.QWidget):
         elif self.s.output_device:
             self._out.insertItem(0, self.s.output_device)
             self._out.setCurrentIndex(0)
-        self._out.setToolTip("Surround mode plays the mono mix here — pick your "
-                             "headset. (Stereo mode ignores this.)")
+        self._out.setToolTip("环绕声模式会将所有声道混成单声道后从此设备播放，请选择耳机。立体声模式不会使用此设置。")
         self._out.currentTextChanged.connect(
             lambda t: self._set("output_device", t))
         g.addWidget(self._out, 1, 1, 1, 2)
 
-        self._row(g, 2, "Volume", "out_gain", 0, 100, mul=100,
-                  tip="Loudness of the mono mix sent to your headphones. 100 = "
-                      "as loud as it can go without distorting. It cannot go "
-                      "past full scale, so use 'Lift quiet' below to make things "
-                      "genuinely easier to hear.")
-        self._row(g, 3, "Lift quiet", "lift", 0, 100,
-                  tip="Raises quiet sounds toward the loud ones without letting "
-                      "peaks distort. This is what makes distant footsteps and "
-                      "speech audible — turning Volume up past full scale "
-                      "does nothing, this does.")
-        outnote = QtWidgets.QLabel("Volume and Lift apply live. Restart "
-                                   "SoundRadar to apply an output change.")
+        self._row(g, 2, "耳机音量", "out_gain", 0, 100, mul=100,
+                  tip="混合到单声道并发送到耳机的音量。100 表示不失真的最大音量。音量无法超过数字满幅；如需听清轻声，请使用下方的“弱声增强”。")
+        self._row(g, 3, "弱声增强", "lift", 0, 100,
+                  tip="提高较轻的声音，同时限制峰值以避免失真。它能让远处的脚步声和语音更清楚；单纯继续调高音量无法达到这个效果。")
+        outnote = QtWidgets.QLabel("耳机音量和弱声增强会立即生效。更换播放设备后，请重新启动 SoundRadar。")
         outnote.setObjectName("hint"); outnote.setWordWrap(True)
         g.addWidget(outnote, 4, 0, 1, 3)
         v.addWidget(disp)
@@ -378,14 +358,12 @@ class SettingsWindow(QtWidgets.QWidget):
         card = QtWidgets.QFrame(); card.setObjectName("card")
         cl = QtWidgets.QVBoxLayout(card)
         cl.setContentsMargins(14, 12, 14, 12); cl.setSpacing(8)
-        t = QtWidgets.QLabel("Keep an app off the radar")
+        t = QtWidgets.QLabel("让某个应用不显示在雷达上")
         t.setObjectName("infotitle"); cl.addWidget(t)
         body = QtWidgets.QLabel(
-            "The radar shows whatever is sent to your capture device. To stop an "
-            "app (e.g. voice chat) showing up, set its output to your headphones "
-            "in Windows Volume mixer — you'll still hear it, it just won't appear.")
+            "雷达会显示发送到采集设备的声音。如要隐藏某个应用（例如语音聊天），请在 Windows“音量混合器”中将它的输出设备改为耳机。你仍然能听到它，但它不会显示在雷达上。")
         body.setObjectName("hint"); body.setWordWrap(True); cl.addWidget(body)
-        mix = QtWidgets.QPushButton("Open Windows Volume mixer")
+        mix = QtWidgets.QPushButton("打开 Windows 音量混合器")
         mix.clicked.connect(self._open_mixer); cl.addWidget(mix)
         v.addWidget(card)
         v.addStretch(1)
@@ -398,11 +376,11 @@ class SettingsWindow(QtWidgets.QWidget):
         v = QtWidgets.QVBoxLayout(w)
         v.setContentsMargins(12, 8, 12, 12); v.setSpacing(12)
 
-        card = QtWidgets.QGroupBox("Live capture")
+        card = QtWidgets.QGroupBox("实时音频采集")
         cv = QtWidgets.QVBoxLayout(card)
         cv.setContentsMargins(16, 18, 16, 12); cv.setSpacing(10)
 
-        self._diag_verdict = QtWidgets.QLabel("Waiting for audio…")
+        self._diag_verdict = QtWidgets.QLabel("正在等待音频…")
         vf = self._diag_verdict.font(); vf.setBold(True); vf.setPointSize(13)
         self._diag_verdict.setFont(vf)
         cv.addWidget(self._diag_verdict)
@@ -415,9 +393,7 @@ class SettingsWindow(QtWidgets.QWidget):
         cv.addWidget(self._diag_detail)
 
         sub = QtWidgets.QLabel(
-            "Play a sound with a clear direction. For real surround the bars "
-            "should differ. If every bar moves together, it's being collapsed "
-            "to mono.")
+            "播放一个方向明确的声音进行检测。真实环绕声的各声道音量条应当不同；如果所有音量条一起变化，说明音频已被合并为单声道。")
         sub.setObjectName("hint"); sub.setWordWrap(True)
         cv.addWidget(sub)
 
@@ -429,9 +405,7 @@ class SettingsWindow(QtWidgets.QWidget):
         v.addWidget(card)
 
         tip = QtWidgets.QLabel(
-            "All bars equal? Turn Windows “Mono audio” OFF and set the game to "
-            "7.1. Bars at the floor (no movement) = nothing is reaching the "
-            "capture device.")
+            "所有音量条都一样？请关闭 Windows“单声道音频”，并将游戏音频设为 7.1。音量条没有变化，表示采集设备没有收到声音。")
         tip.setObjectName("hint"); tip.setWordWrap(True)
         v.addWidget(tip)
         v.addStretch(1)
@@ -466,7 +440,7 @@ class SettingsWindow(QtWidgets.QWidget):
         lv = self._get_levels()
         n = int(getattr(lv, "channels", 0))
         if n <= 0 or lv.rms.size == 0:
-            self._diag_verdict.setText("● No audio yet")
+            self._diag_verdict.setText("● 尚未收到音频")
             self._diag_verdict.setStyleSheet("color:#757b87;")
             return
         if n != self._diag_n:
@@ -489,26 +463,22 @@ class SettingsWindow(QtWidgets.QWidget):
         spread = (max(allvals) - min(allvals)) if allvals else 0.0
         live = [i for i in range(n) if allvals[i] > -80.0]
         if not any_loud:
-            self._diag_verdict.setText("● Silence — nothing on this device")
+            self._diag_verdict.setText("● 静音 — 此设备没有音频")
             self._diag_verdict.setStyleSheet("color:#757b87;")
         elif n >= 6 and len(live) <= 2:
-            names = ", ".join(lv.labels[i] for i in live) or "none"
+            names = "、".join(lv.labels[i] for i in live) or "无"
             self._diag_verdict.setText(
-                f"● Stereo only ({names}) — no front/back")
+                f"● 仅检测到立体声（{names}）— 无法识别前后方向")
             self._diag_verdict.setStyleSheet("color:#e0a030;")
             self._diag_detail.setText(
-                f"Audio is reaching this {n}-channel device, but only {names} "
-                "carry any signal — the surround channels are silent. The radar "
-                "can only show left/right like this. The app you're listening to "
-                "is playing in stereo: set the GAME's audio output to 7.1 "
-                "surround (and its Windows output device to this one).")
+                f"此 {n} 声道设备已收到音频，但只有 {names} 声道有信号，其他环绕声道没有声音，因此雷达目前只能显示左右方向。当前游戏可能仍在播放立体声：请在游戏内将音频输出设为 7.1，并在 Windows 中把该游戏的输出设备设为此设备。")
             self._diag_detail.setVisible(True)
             return
         elif spread > 6.0:
-            self._diag_verdict.setText("● Direction detected — radar will work")
+            self._diag_verdict.setText("● 已检测到方向 — 雷达正常")
             self._diag_verdict.setStyleSheet(f"color:{ACCENT};")
         else:
-            self._diag_verdict.setText("● Mono / uniform — collapsed, no direction")
+            self._diag_verdict.setText("● 各声道相同 — 音频已合并，无法识别方向")
             self._diag_verdict.setStyleSheet("color:#e0a030;")
         self._diag_detail.setVisible(False)
 
@@ -520,34 +490,29 @@ class SettingsWindow(QtWidgets.QWidget):
         v = QtWidgets.QVBoxLayout(w)
         v.setContentsMargins(12, 8, 12, 12); v.setSpacing(12)
 
-        card = self._card("Record a sample"); g = card.layout()
+        card = self._card("录制音频样本"); g = card.layout()
         intro = QtWidgets.QLabel(
-            "Optional. Records a few minutes of the audio SoundRadar is "
-            "capturing, so the radar's defaults can be checked against how "
-            "this game actually sounds instead of guesswork.\n\n"
-            "There is nothing to set up: start it, play normally, stop it. "
-            "You don't need to stage anything or press anything while playing.")
+            "可选功能：录制几分钟 SoundRadar 正在采集的音频，方便根据游戏的实际声音检查雷达默认设置。\n\n"
+            "无需额外准备：开始录制后正常游戏，结束时停止录制。游戏过程中不必刻意制造声音或返回此窗口操作。")
         intro.setObjectName("hint"); intro.setWordWrap(True)
         g.addWidget(intro, 0, 0, 1, 3)
 
-        g.addWidget(QtWidgets.QLabel("Name"), 1, 0)
+        g.addWidget(QtWidgets.QLabel("文件名"), 1, 0)
         self._rec_name = QtWidgets.QLineEdit()
-        self._rec_name.setPlaceholderText("e.g. arma-reforger")
+        self._rec_name.setPlaceholderText("例如 arma-reforger")
         g.addWidget(self._rec_name, 1, 1, 1, 2)
 
-        self._rec_btn = QtWidgets.QPushButton("●   Start recording")
+        self._rec_btn = QtWidgets.QPushButton("●   开始录制")
         self._rec_btn.setObjectName("accent")
         self._rec_btn.clicked.connect(self._toggle_record)
         g.addWidget(self._rec_btn, 2, 0, 1, 3)
 
-        self._rec_state = QtWidgets.QLabel("Not recording.")
+        self._rec_state = QtWidgets.QLabel("当前未录制。")
         self._rec_state.setObjectName("hint"); self._rec_state.setWordWrap(True)
         g.addWidget(self._rec_state, 3, 0, 1, 3)
 
-        self._mark_btn = QtWidgets.QPushButton("Mark this moment (optional)")
-        self._mark_btn.setToolTip("Only if you happen to be at the panel — a "
-                                 "marked moment is easier to find in the "
-                                 "recording. Never required.")
+        self._mark_btn = QtWidgets.QPushButton("标记此刻（可选）")
+        self._mark_btn.setToolTip("只有在你刚好打开设置面板时才需要标记，方便之后在录音中找到这一刻。无需标记也能正常录制。")
         self._mark_btn.clicked.connect(self._do_mark)
         self._mark_btn.setEnabled(False)
         g.addWidget(self._mark_btn, 4, 0, 1, 3)
@@ -556,12 +521,10 @@ class SettingsWindow(QtWidgets.QWidget):
         howto = QtWidgets.QFrame(); howto.setObjectName("card")
         hl = QtWidgets.QVBoxLayout(howto)
         hl.setContentsMargins(14, 12, 14, 12); hl.setSpacing(8)
-        openf = QtWidgets.QPushButton("Open recordings folder")
+        openf = QtWidgets.QPushButton("打开录音文件夹")
         openf.clicked.connect(self._open_captures); hl.addWidget(openf)
         note = QtWidgets.QLabel(
-            "Saved locally to %APPDATA%\\SoundRadar\\captures — about 45 MB "
-            "per minute. Note this records the game audio, including any voice "
-            "chat that is playing.")
+            "录音保存在本机 %APPDATA%\\SoundRadar\\captures 文件夹中，每分钟约占 45 MB。录音包含游戏声音以及正在播放的语音聊天。")
         note.setObjectName("hint"); note.setWordWrap(True); hl.addWidget(note)
         v.addWidget(howto)
         v.addStretch(1)
@@ -575,25 +538,24 @@ class SettingsWindow(QtWidgets.QWidget):
         start, stop, _mark, status = self._rec
         if status() is not None:
             path = stop()
-            self._rec_btn.setText("●   Start recording")
+            self._rec_btn.setText("●   开始录制")
             self._mark_btn.setEnabled(False)
-            self._rec_state.setText(f"Saved: {path}" if path
-                                    else "Nothing was recorded.")
+            self._rec_state.setText(f"已保存：{path}" if path
+                                    else "没有录到音频。")
             return
         name = self._rec_name.text().strip() or "session"
         if start(name) is None:
             self._rec_state.setText(
-                "No audio arriving yet — start the game (or check the Check "
-                "tab) and try again.")
+                "尚未收到音频。请先启动游戏，或前往“检测”页确认采集状态，然后重试。")
             return
-        self._rec_btn.setText("■   Stop recording")
+        self._rec_btn.setText("■   停止录制")
         self._mark_btn.setEnabled(True)
 
     def _do_mark(self):
         _start, _stop, mark, _status = self._rec
         t = mark("interesting")
         if t is not None:
-            self._rec_state.setText(f"Marked {t:.1f}s into the recording")
+            self._rec_state.setText(f"已标记录音中的第 {t:.1f} 秒")
 
     def _update_record_state(self):
         if self._rec is None or not self.isVisible():
@@ -601,11 +563,11 @@ class SettingsWindow(QtWidgets.QWidget):
         st = self._rec[3]()
         if st is None:
             return
-        msg = f"Recording — {st['elapsed']:.0f}s, {st['marks']} mark(s)"
+        msg = f"正在录制 — {st['elapsed']:.0f} 秒，{st['marks']} 个标记"
         if st["dropped"]:
-            msg += f"  (dropped {st['dropped']} frames)"
+            msg += f"（丢弃了 {st['dropped']} 帧）"
         if st["error"]:
-            msg += f"  ERROR: {st['error']}"
+            msg += f"  错误：{st['error']}"
         self._rec_state.setText(msg)
 
     def _open_captures(self):
@@ -693,7 +655,7 @@ class SettingsWindow(QtWidgets.QWidget):
 
     def _pick_colour(self):
         col = QtWidgets.QColorDialog.getColor(
-            QtGui.QColor(self.s.color), self, "Radar colour")
+            QtGui.QColor(self.s.color), self, "选择雷达颜色")
         if col.isValid():
             self.s.color = col.name().upper()
             self._paint_swatch()
